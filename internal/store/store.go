@@ -36,13 +36,6 @@ type SystemFilter struct {
 	Offset      int
 }
 
-// TokenStore persists enrollment tokens.
-type TokenStore interface {
-	Create(ctx context.Context, t *domain.EnrollmentToken) error
-	GetByHash(ctx context.Context, hash string) (*domain.EnrollmentToken, error)
-	Update(ctx context.Context, t *domain.EnrollmentToken) error
-}
-
 // JoinTokenStore persists reusable join tokens.
 type JoinTokenStore interface {
 	Create(ctx context.Context, t *domain.JoinToken) error

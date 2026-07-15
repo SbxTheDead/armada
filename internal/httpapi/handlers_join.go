@@ -30,10 +30,16 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 		writeDomainError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, enrollResponse{
+	writeJSON(w, http.StatusOK, joinResponse{
 		SystemID: res.System.ID,
 		APIKey:   res.APIKey,
 	})
+}
+
+// joinResponse is the credential material returned once to a joining agent.
+type joinResponse struct {
+	SystemID string `json:"system_id"`
+	APIKey   string `json:"api_key"` // shown once
 }
 
 // --- Operator: join-token management ---

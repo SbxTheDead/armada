@@ -42,12 +42,8 @@ func main() {
 	switch os.Args[1] {
 	case "systems":
 		err = runSystems(ctx, os.Args[2:])
-	case "enroll":
-		err = runEnroll(ctx, os.Args[2:])
 	case "join-token":
 		err = runJoinToken(ctx, os.Args[2:])
-	case "install-command":
-		err = runInstallCommand(ctx, os.Args[2:])
 	case "monitor":
 		err = runMonitor(ctx, os.Args[2:])
 	case "version", "--version", "-v":
@@ -70,18 +66,19 @@ func usage() {
 	fmt.Fprint(os.Stderr, `armada — fleet management CLI
 
 Commands:
-  systems register   Register a new managed device
+  join-token create  Create a reusable join key (zero-touch: one key binds every device)
+  join-token list    List join keys
+  join-token revoke  Revoke a join key
   systems list       List devices (with filters)
   systems get        Show one device in detail
   systems inventory  Show a device's latest hardware/OS inventory
   systems approve    Activate a device that joined under a manual-approval key
-  join-token create  Create a reusable join key (zero-touch: one key binds many devices)
-  join-token list    List join keys
-  join-token revoke  Revoke a join key
-  enroll             Issue a one-time enrollment token for a single device
-  install-command    Print the one-line curl|sh (and PowerShell) to bind one device
   monitor            Live health + metrics view of the fleet
   version            Print the CLI version
+
+Devices are added only by running a join key's one-liner on them — there is no
+manual registration. Create a key with 'join-token create', then run the printed
+command on any VPS/VM/IoT device to bind it.
 
 Global configuration (env or per-command flags):
   --server   ARMADA_SERVER_URL      control-plane URL (default http://localhost:8080)

@@ -83,39 +83,26 @@ func ensureEnrolled(ctx context.Context, cfg config.Agent, client *Client, log *
 		fqdn, _ = os.Hostname()
 	}
 
-	var (
-		systemID, apiKey string
-		err              error
-	)
-	switch {
-	// 2. Zero-touch: reusable join key self-registers this device.
-	case cfg.JoinToken != "":
-		hostname, _ := os.Hostname()
-		mid := cfg.MachineID
-		if mid == "" {
-			mid = machineID()
-		}
-		facts := domain.DeviceFacts{
-			MachineID: mid,
-			Hostname:  hostname,
-			FQDN:      fqdn,
-			OS:        runtime.GOOS,
-			Arch:      runtime.GOARCH,
-		}
-		log.Info("joining fleet with join key", "fqdn", fqdn, "machine_id", shortID(facts.MachineID))
-		systemID, apiKey, err = client.Join(ctx, cfg.JoinToken, facts)
-		if err != nil {
-			return state{}, fmt.Errorf("join failed: %w", err)
-		}
-	// 3. Single-use enrollment token against a pre-registered system.
-	case cfg.EnrollToken != "":
-		log.Info("enrolling with control plane", "fqdn", fqdn)
-		systemID, apiKey, err = client.Enroll(ctx, cfg.EnrollToken, fqdn)
-		if err != nil {
-			return state{}, fmt.Errorf("enrollment failed: %w", err)
-		}
-	default:
-		return state{}, fmt.Errorf("agent has no API key, join key, or enrollment token; set ARMADA_JOIN_TOKEN")
+	// 2. Zero-touch: the reusable join key self-registers this device.
+	if cfg.JoinToken == "" {
+		return state{}, fmt.Errorf("agent has no API key or join key; set ARMADA_JOIN_TOKEN")
+	}
+	hostname, _ := os.Hostname()
+	mid := cfg.MachineID
+	if mid == "" {
+		mid = machineID()
+	}
+	facts := domain.DeviceFacts{
+		MachineID: mid,
+		Hostname:  hostname,
+		FQDN:      fqdn,
+		OS:        runtime.GOOS,
+		Arch:      runtime.GOARCH,
+	}
+	log.Info("joining fleet with join key", "fqdn", fqdn, "machine_id", shortID(facts.MachineID))
+	systemID, apiKey, err := client.Join(ctx, cfg.JoinToken, facts)
+	if err != nil {
+		return state{}, fmt.Errorf("join failed: %w", err)
 	}
 
 	st := state{SystemID: systemID, APIKey: apiKey}

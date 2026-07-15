@@ -53,7 +53,7 @@ func New(cfg Config) *Server {
 // Route groups:
 //   - /healthz, /readyz            unauthenticated liveness/readiness
 //   - /api/v1/...                  operator API (X-Tenant-ID + operator token)
-//   - /agent/v1/enroll             unauthenticated (token-in-body) enrollment
+//   - /agent/v1/join               unauthenticated (join key in body) onboarding
 //   - /agent/v1/...                agent API (bearer API key)
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -64,12 +64,10 @@ func (s *Server) Handler() http.Handler {
 
 	// Operator API — requires operator auth + tenant.
 	op := s.requireOperator
-	mux.Handle("POST /api/v1/systems", op(http.HandlerFunc(s.handleCreateSystem)))
 	mux.Handle("GET /api/v1/systems", op(http.HandlerFunc(s.handleListSystems)))
 	mux.Handle("GET /api/v1/systems/{id}", op(http.HandlerFunc(s.handleGetSystem)))
 	mux.Handle("GET /api/v1/systems/{id}/inventory", op(http.HandlerFunc(s.handleGetInventory)))
 	mux.Handle("GET /api/v1/systems/{id}/metrics", op(http.HandlerFunc(s.handleGetMetrics)))
-	mux.Handle("POST /api/v1/systems/{id}/enroll-token", op(http.HandlerFunc(s.handleIssueToken)))
 	mux.Handle("POST /api/v1/systems/{id}/approve", op(http.HandlerFunc(s.handleApproveSystem)))
 
 	// Operator: reusable join tokens (zero-touch onboarding).
@@ -80,8 +78,7 @@ func (s *Server) Handler() http.Handler {
 	// Self-hosting agent distribution: /manage installer + binary downloads.
 	s.registerManageRoutes(mux)
 
-	// Agent enrollment — token authenticates in the body, no bearer yet.
-	mux.HandleFunc("POST /agent/v1/enroll", s.handleEnroll)
+	// Agent join — the reusable join key in the body authorizes; no bearer yet.
 	mux.HandleFunc("POST /agent/v1/join", s.handleJoin)
 
 	// Agent API — requires a valid agent bearer key.
@@ -124,8 +121,6 @@ func writeDomainError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, domain.ErrValidation):
 		writeError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, domain.ErrEnrollmentToken):
-		writeError(w, http.StatusUnauthorized, err.Error())
 	case errors.Is(err, domain.ErrJoinToken):
 		writeError(w, http.StatusUnauthorized, err.Error())
 	case errors.Is(err, domain.ErrUnauthorized):

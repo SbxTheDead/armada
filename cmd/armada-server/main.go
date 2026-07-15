@@ -42,7 +42,7 @@ func run(log *slog.Logger) error {
 		log.Warn("ARMADA_DATABASE_URL set but the PostgreSQL adapter is not yet wired; using in-memory store")
 	}
 
-	fleet := service.NewFleet(db.Systems, db.Tokens, db.JoinTokens, db.Identities, db.Telemetry, service.Options{
+	fleet := service.NewFleet(db.Systems, db.JoinTokens, db.Identities, db.Telemetry, service.Options{
 		HeartbeatInterval: cfg.HeartbeatInterval,
 	})
 

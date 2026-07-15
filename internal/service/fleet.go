@@ -27,7 +27,6 @@ type IDGen func() string
 // ingest telemetry, and answer queries about fleet state.
 type Fleet struct {
 	systems    store.SystemStore
-	tokens     store.TokenStore
 	joinTokens store.JoinTokenStore
 	identities store.IdentityStore
 	telemetry  store.TelemetryStore
@@ -48,10 +47,9 @@ type Options struct {
 }
 
 // NewFleet wires the service to its persistence ports.
-func NewFleet(systems store.SystemStore, tokens store.TokenStore, joinTokens store.JoinTokenStore, identities store.IdentityStore, telemetry store.TelemetryStore, opts Options) *Fleet {
+func NewFleet(systems store.SystemStore, joinTokens store.JoinTokenStore, identities store.IdentityStore, telemetry store.TelemetryStore, opts Options) *Fleet {
 	f := &Fleet{
 		systems:           systems,
-		tokens:            tokens,
 		joinTokens:        joinTokens,
 		identities:        identities,
 		telemetry:         telemetry,
@@ -69,36 +67,6 @@ func NewFleet(systems store.SystemStore, tokens store.TokenStore, joinTokens sto
 		f.heartbeatInterval = 60 * time.Second
 	}
 	return f
-}
-
-// RegisterSystem creates a new managed system in the pending lifecycle. It is an
-// operator action (authenticated as a user/API key), distinct from agent
-// enrollment.
-func (f *Fleet) RegisterSystem(ctx context.Context, in domain.NewSystemInput) (*domain.System, error) {
-	if err := in.Validate(); err != nil {
-		return nil, err
-	}
-	now := f.now().UTC()
-	sys := &domain.System{
-		ID:          f.id(),
-		TenantID:    in.TenantID,
-		Name:        in.Name,
-		FQDN:        in.FQDN,
-		Project:     in.Project,
-		Region:      in.Region,
-		Environment: in.Environment,
-		Provider:    in.Provider,
-		Tags:        in.Tags,
-		Labels:      in.Labels,
-		Lifecycle:   domain.LifecyclePending,
-		Health:      domain.HealthUnknown,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-	if err := f.systems.Create(ctx, sys); err != nil {
-		return nil, err
-	}
-	return sys, nil
 }
 
 // GetSystem returns a single system with its live health recomputed.
@@ -134,100 +102,13 @@ func (f *Fleet) refreshHealth(ctx context.Context, sys *domain.System) {
 	sys.Health = domain.EvaluateHealth(sys.LastCheckIn, f.now().UTC(), f.heartbeatInterval, problem)
 }
 
-// --- Enrollment ---
+// --- Reusable join tokens (zero-touch onboarding) ---
 
-// IssueEnrollmentToken mints a single-use token bound to a tenant (and
-// optionally a pre-registered system). It returns the plaintext exactly once;
-// only the hash is persisted.
-func (f *Fleet) IssueEnrollmentToken(ctx context.Context, tenantID, systemID string, ttl time.Duration) (plaintext string, tok *domain.EnrollmentToken, err error) {
-	if tenantID == "" {
-		return "", nil, fmt.Errorf("%w: tenant_id is required", domain.ErrValidation)
-	}
-	if ttl <= 0 {
-		ttl = 15 * time.Minute
-	}
-	secret, err := randomSecret(32)
-	if err != nil {
-		return "", nil, err
-	}
-	now := f.now().UTC()
-	tok = &domain.EnrollmentToken{
-		ID:        f.id(),
-		TenantID:  tenantID,
-		SystemID:  systemID,
-		Hash:      hashSecret(secret),
-		ExpiresAt: now.Add(ttl),
-		CreatedAt: now,
-	}
-	if err := f.tokens.Create(ctx, tok); err != nil {
-		return "", nil, err
-	}
-	return secret, tok, nil
-}
-
-// EnrollResult carries the credentials handed back to an agent once.
-type EnrollResult struct {
+// JoinResult carries the credentials handed back to an agent when it joins.
+type JoinResult struct {
 	System *domain.System
 	APIKey string // plaintext bearer key, shown once
 }
-
-// Enroll redeems an enrollment token and binds the calling agent to a system,
-// returning a bearer API key the agent stores locally. If the token was
-// pre-bound to a system, that system is used; otherwise the agent supplies its
-// desired FQDN and a matching pending system is claimed.
-func (f *Fleet) Enroll(ctx context.Context, tokenPlaintext, fqdn string) (*EnrollResult, error) {
-	tok, err := f.tokens.GetByHash(ctx, hashSecret(tokenPlaintext))
-	if err != nil {
-		return nil, domain.ErrEnrollmentToken
-	}
-	now := f.now().UTC()
-	if !tok.Active(now) {
-		return nil, domain.ErrEnrollmentToken
-	}
-
-	// Resolve the target system.
-	var sys *domain.System
-	if tok.SystemID != "" {
-		sys, err = f.systems.Get(ctx, tok.TenantID, tok.SystemID)
-	} else {
-		sys, err = f.systems.GetByFQDN(ctx, tok.TenantID, fqdn)
-	}
-	if err != nil {
-		return nil, err
-	}
-	if sys.Lifecycle == domain.LifecycleRetired || sys.Lifecycle == domain.LifecycleQuarantine {
-		return nil, fmt.Errorf("%w: system is %s", domain.ErrValidation, sys.Lifecycle)
-	}
-
-	// Mint the agent credential.
-	apiKey, err := randomSecret(32)
-	if err != nil {
-		return nil, err
-	}
-	identity := &domain.AgentIdentity{
-		SystemID:   sys.ID,
-		TenantID:   sys.TenantID,
-		APIKeyHash: hashSecret(apiKey),
-		CreatedAt:  now,
-	}
-	if err := f.identities.Create(ctx, identity); err != nil {
-		return nil, err
-	}
-
-	// Consume the token and advance the system lifecycle.
-	tok.ConsumedAt = &now
-	if err := f.tokens.Update(ctx, tok); err != nil {
-		return nil, err
-	}
-	sys.Lifecycle = domain.LifecycleEnrolled
-	sys.UpdatedAt = now
-	if err := f.systems.Update(ctx, sys); err != nil {
-		return nil, err
-	}
-	return &EnrollResult{System: sys, APIKey: apiKey}, nil
-}
-
-// --- Reusable join tokens (zero-touch onboarding) ---
 
 // NewJoinTokenInput describes a reusable join key. Zero MaxUses means unlimited;
 // zero TTL means the key never expires — the "generate once, works forever"
@@ -310,7 +191,7 @@ func (f *Fleet) RevokeJoinToken(ctx context.Context, tenantID, id string) error 
 // grouped per the key's presets, and issued a bearer API key. It is idempotent
 // on MachineID, so re-running the installer on the same host re-attaches to the
 // existing System rather than duplicating it.
-func (f *Fleet) JoinWithToken(ctx context.Context, joinKey string, facts domain.DeviceFacts) (*EnrollResult, error) {
+func (f *Fleet) JoinWithToken(ctx context.Context, joinKey string, facts domain.DeviceFacts) (*JoinResult, error) {
 	if joinKey == "" {
 		return nil, domain.ErrJoinToken
 	}
@@ -362,7 +243,7 @@ func (f *Fleet) JoinWithToken(ctx context.Context, joinKey string, facts domain.
 	if err := f.joinTokens.Update(ctx, tok); err != nil {
 		return nil, err
 	}
-	return &EnrollResult{System: sys, APIKey: apiKey}, nil
+	return &JoinResult{System: sys, APIKey: apiKey}, nil
 }
 
 // findDeviceSystem resolves a joining device to an existing system, preferring

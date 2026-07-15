@@ -3,8 +3,8 @@
 // external services, deterministic, and safe for concurrent use. Production
 // deployments swap in the PostgreSQL adapter behind the same interfaces.
 //
-// One type cannot implement Create for both SystemStore and TokenStore, so the
-// backend is a shared data core (`core`) fronted by four small adapter types,
+// One type cannot implement Create for both SystemStore and JoinTokenStore, so
+// the backend is a shared data core (`core`) fronted by small adapter types,
 // one per port. All adapters share the same mutex and maps.
 package memory
 
@@ -22,20 +22,18 @@ import (
 // events) so coarse locking is appropriate.
 type core struct {
 	mu         sync.RWMutex
-	systems    map[string]*domain.System          // key: tenantID/id
-	tokens     map[string]*domain.EnrollmentToken // key: hash
-	joinTokens map[string]*domain.JoinToken       // key: hash
-	identities map[string]*domain.AgentIdentity   // key: tenantID/systemID
-	byAPIKey   map[string]string                  // apiKeyHash -> tenantID/systemID
-	heartbeats map[string]*domain.Heartbeat       // key: systemID (latest only)
-	inventory  map[string]*domain.Inventory       // key: systemID
+	systems    map[string]*domain.System        // key: tenantID/id
+	joinTokens map[string]*domain.JoinToken     // key: hash
+	identities map[string]*domain.AgentIdentity // key: tenantID/systemID
+	byAPIKey   map[string]string                // apiKeyHash -> tenantID/systemID
+	heartbeats map[string]*domain.Heartbeat     // key: systemID (latest only)
+	inventory  map[string]*domain.Inventory     // key: systemID
 }
 
 // DB is the set of port adapters returned by New. Wire each field into the
 // service that needs it.
 type DB struct {
 	Systems    *SystemStore
-	Tokens     *TokenStore
 	JoinTokens *JoinTokenStore
 	Identities *IdentityStore
 	Telemetry  *TelemetryStore
@@ -45,7 +43,6 @@ type DB struct {
 func New() *DB {
 	c := &core{
 		systems:    make(map[string]*domain.System),
-		tokens:     make(map[string]*domain.EnrollmentToken),
 		joinTokens: make(map[string]*domain.JoinToken),
 		identities: make(map[string]*domain.AgentIdentity),
 		byAPIKey:   make(map[string]string),
@@ -54,7 +51,6 @@ func New() *DB {
 	}
 	return &DB{
 		Systems:    &SystemStore{c},
-		Tokens:     &TokenStore{c},
 		JoinTokens: &JoinTokenStore{c},
 		Identities: &IdentityStore{c},
 		Telemetry:  &TelemetryStore{c},
@@ -199,42 +195,6 @@ func paginate[T any](items []T, offset, limit int) []T {
 		items = items[:limit]
 	}
 	return items
-}
-
-// --- TokenStore ---
-
-type TokenStore struct{ c *core }
-
-var _ store.TokenStore = (*TokenStore)(nil)
-
-func (s *TokenStore) Create(ctx context.Context, t *domain.EnrollmentToken) error {
-	s.c.mu.Lock()
-	defer s.c.mu.Unlock()
-	cp := *t
-	s.c.tokens[t.Hash] = &cp
-	return nil
-}
-
-func (s *TokenStore) GetByHash(ctx context.Context, hash string) (*domain.EnrollmentToken, error) {
-	s.c.mu.RLock()
-	defer s.c.mu.RUnlock()
-	t, ok := s.c.tokens[hash]
-	if !ok {
-		return nil, domain.ErrEnrollmentToken
-	}
-	cp := *t
-	return &cp, nil
-}
-
-func (s *TokenStore) Update(ctx context.Context, t *domain.EnrollmentToken) error {
-	s.c.mu.Lock()
-	defer s.c.mu.Unlock()
-	if _, ok := s.c.tokens[t.Hash]; !ok {
-		return domain.ErrNotFound
-	}
-	cp := *t
-	s.c.tokens[t.Hash] = &cp
-	return nil
 }
 
 // --- JoinTokenStore ---

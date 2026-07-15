@@ -48,7 +48,7 @@ swappable adapters:
 cmd/                    entrypoints (armada-server, armada, armada-agent)
 internal/
   domain/               entities + invariants (System, Heartbeat, Inventory…)
-  service/              use cases (register, enroll, ingest, health) — the core
+  service/              use cases (join, ingest, health, keys) — the core
   store/                persistence ports (interfaces)
     memory/             in-memory adapter (default; used by tests)
   httpapi/              REST transport adapter (server side)
@@ -89,14 +89,11 @@ export ARMADA_SERVER_URL=http://localhost:8080
 export ARMADA_OPERATOR_TOKEN=op-secret
 export ARMADA_TENANT_ID=acme
 
-# 4. Register a device, then mint its one-time enrollment token
-./bin/armada systems register --name web-1 --fqdn web1.acme.internal --region eu-west
-./bin/armada enroll <system-id>
+# 4. Create a reusable join key (this prints a one-liner)
+./bin/armada join-token create --name fleet --region eu-west
 
-# 5. On the device, run the agent with that token
-ARMADA_SERVER_URL=http://<vps>:8080 \
-ARMADA_ENROLL_TOKEN=<token> \
-./bin/armada-agent
+# 5. On each device/VM, run that one-liner — it self-installs and self-registers
+wget -qO- 'http://<vps>:8080/manage?join=<key>' | sh
 
 # 6. Watch the fleet live
 ./bin/armada monitor
@@ -145,13 +142,8 @@ Manage keys with `armada join-token list` and `armada join-token revoke <id>`.
 Options: `--approval manual` (device lands `pending` until `armada systems
 approve <id>`), `--max-uses N`, and `--ttl` if you *do* want it to expire.
 
-### Single-device: one-time token
-
-For tight, per-machine control (register first, then bind exactly one device):
-
-```bash
-armada install-command <system-id>   # prints a curl|sh with a single-use ?token=
-```
+Devices are added **only** by running a join key's one-liner on them — there is
+no manual registration step.
 
 The running agent presents itself to process viewers as **`MANAGEMENT AGENT`**
 — that's the name you'll see in `htop`, `ps`, and `top` on Linux.
@@ -176,19 +168,19 @@ the Docker image bakes every target in automatically.
 ## CLI reference
 
 ```
-armada systems register --name N --fqdn F [--project --region --environment --provider --tag ...]
-armada systems list     [--region --health --lifecycle --project --provider --tag --limit] [--json]
-armada systems get      <id> [--json]
-armada systems inventory <id>
-armada systems approve  <id>                         # activate a manual-approval join
 armada join-token create [--name --project --region --environment --provider --tag --approval auto|manual --max-uses N --ttl D]
 armada join-token list   [--json]
 armada join-token revoke <id>
-armada enroll           <system-id> [--ttl 15m]
-armada install-command  <system-id> [--ttl 30m]     # single-device one-liner
-armada monitor          [--interval 5s] [--once] [--region --health ...]
+armada systems list      [--region --health --lifecycle --project --provider --tag --limit] [--json]
+armada systems get       <id> [--json]
+armada systems inventory <id>
+armada systems approve   <id>                         # activate a manual-approval join
+armada monitor           [--interval 5s] [--once] [--region --health ...]
 armada version
 ```
+
+Devices are onboarded only via join keys (run the one-liner on the device);
+there is no manual `register` command.
 
 Global config (env, overridable per command with `--server` / `--token` /
 `--tenant`):
@@ -214,29 +206,32 @@ Operator endpoints require `Authorization: Bearer <operator-token>` and
 
 | Method | Path                                  | Purpose                        |
 | ------ | ------------------------------------- | ------------------------------ |
-| POST   | `/api/v1/systems`                     | register a device              |
 | GET    | `/api/v1/systems`                     | list / filter devices          |
 | GET    | `/api/v1/systems/{id}`                | device detail (live health)    |
 | GET    | `/api/v1/systems/{id}/inventory`      | latest inventory snapshot      |
 | GET    | `/api/v1/systems/{id}/metrics`        | latest heartbeat metrics       |
-| POST   | `/api/v1/systems/{id}/enroll-token`   | mint one-time enrollment token |
+| POST   | `/api/v1/systems/{id}/approve`        | approve a manual-join device   |
+| POST   | `/api/v1/join-tokens`                 | create a reusable join key     |
+| GET    | `/api/v1/join-tokens`                 | list join keys                 |
+| DELETE | `/api/v1/join-tokens/{id}`            | revoke a join key              |
 
 Agent endpoints:
 
-| Method | Path                     | Auth                    | Purpose                 |
-| ------ | ------------------------ | ----------------------- | ----------------------- |
-| POST   | `/agent/v1/enroll`       | enrollment token (body) | exchange token → API key |
-| POST   | `/agent/v1/heartbeat`    | agent bearer key        | liveness + metrics      |
-| POST   | `/agent/v1/inventory`    | agent bearer key        | upload inventory        |
+| Method | Path                     | Auth                    | Purpose                    |
+| ------ | ------------------------ | ----------------------- | -------------------------- |
+| POST   | `/agent/v1/join`         | join key (body)         | self-register → API key    |
+| POST   | `/agent/v1/heartbeat`    | agent bearer key        | liveness + metrics         |
+| POST   | `/agent/v1/inventory`    | agent bearer key        | upload inventory           |
 
-Unauthenticated: `GET /healthz`, `GET /readyz`.
+Unauthenticated: `GET /healthz`, `GET /readyz`, `GET /manage...` (install).
 
 ### Security notes
 
-- Enrollment tokens and agent API keys are stored only as SHA-256 hashes;
-  plaintext is shown exactly once.
-- Operator token and enrollment tokens are compared in constant time.
-- Enrollment tokens are single-use and expire (default 15 min).
+- Join keys and agent API keys are stored only as SHA-256 hashes; plaintext is
+  shown exactly once.
+- Operator token and join keys are compared in constant time.
+- Join keys are revocable, dedupe devices by stable machine id, and support
+  optional expiry, use caps, and a manual-approval gate.
 - Agents can only report for the system their key is bound to; a client-supplied
   `system_id` on heartbeat/inventory is ignored in favour of the authenticated
   identity.
@@ -279,7 +274,7 @@ make vet      # go vet
 make cover    # coverage summary
 ```
 
-The test suite exercises the full flow — register → issue token → enroll →
+The test suite exercises the full flow — create join key → device joins →
 heartbeat → health transition → offline detection — both at the service layer
 and end-to-end through the real HTTP router.
 
@@ -288,10 +283,11 @@ and end-to-end through the real HTTP router.
 ## Status & roadmap
 
 Implemented and verified end-to-end today: control plane, operator CLI,
-management agent, enrollment, heartbeat/health, inventory, live monitor,
-self-hosting one-command install (`/manage`, auto OS/arch detection, systemd/
-OpenRC/Scheduled-Task), `MANAGEMENT AGENT` process name, in-memory storage,
-Docker packaging, cross-compilation across the architecture matrix.
+management agent, zero-touch join (reusable keys, auto-register, machine-id
+dedupe, approval gate), heartbeat/health, inventory, live monitor, self-hosting
+one-command install (`/manage`, auto OS/arch detection, systemd/OpenRC/
+Scheduled-Task), `MANAGEMENT AGENT` process name, in-memory storage, Docker
+packaging, cross-compilation across the architecture matrix.
 
 Designed-for and next up (adapter-layer work, no core changes):
 

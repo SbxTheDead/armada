@@ -20,7 +20,7 @@ func newFleet(t *testing.T, clk *fixedClock) (*service.Fleet, *memory.DB) {
 	t.Helper()
 	db := memory.New()
 	seq := 0
-	f := service.NewFleet(db.Systems, db.Tokens, db.JoinTokens, db.Identities, db.Telemetry, service.Options{
+	f := service.NewFleet(db.Systems, db.JoinTokens, db.Identities, db.Telemetry, service.Options{
 		Now: clk.now,
 		IDGen: func() string {
 			seq++
@@ -31,77 +31,36 @@ func newFleet(t *testing.T, clk *fixedClock) (*service.Fleet, *memory.DB) {
 	return f, db
 }
 
-func TestRegisterSystem_Validation(t *testing.T) {
-	clk := &fixedClock{t: time.Unix(1_700_000_000, 0).UTC()}
-	f, _ := newFleet(t, clk)
-
-	_, err := f.RegisterSystem(context.Background(), domain.NewSystemInput{Name: "x"})
-	if err == nil {
-		t.Fatal("expected validation error for missing tenant/fqdn")
+// joinOne creates a key with the given presets and joins one device through it,
+// returning the resulting system.
+func joinOne(t *testing.T, f *service.Fleet, in service.NewJoinTokenInput, facts domain.DeviceFacts) *domain.System {
+	t.Helper()
+	key, _, err := f.CreateJoinToken(context.Background(), in)
+	if err != nil {
+		t.Fatalf("create join token: %v", err)
 	}
+	res, err := f.JoinWithToken(context.Background(), key, facts)
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	return res.System
 }
 
-func TestRegisterSystem_DuplicateFQDN(t *testing.T) {
-	clk := &fixedClock{t: time.Unix(1_700_000_000, 0).UTC()}
-	f, _ := newFleet(t, clk)
-	in := domain.NewSystemInput{TenantID: "t1", Name: "web-1", FQDN: "web1.example.com"}
-
-	if _, err := f.RegisterSystem(context.Background(), in); err != nil {
-		t.Fatalf("first register: %v", err)
-	}
-	if _, err := f.RegisterSystem(context.Background(), in); err == nil {
-		t.Fatal("expected conflict on duplicate FQDN")
-	}
-}
-
-func TestEnrollAndHeartbeatFlow(t *testing.T) {
+func TestHeartbeatDrivesHealth(t *testing.T) {
 	clk := &fixedClock{t: time.Unix(1_700_000_000, 0).UTC()}
 	f, _ := newFleet(t, clk)
 	ctx := context.Background()
 
-	sys, err := f.RegisterSystem(ctx, domain.NewSystemInput{
-		TenantID: "t1", Name: "web-1", FQDN: "web1.example.com",
-	})
-	if err != nil {
-		t.Fatalf("register: %v", err)
-	}
-	if sys.Lifecycle != domain.LifecyclePending {
-		t.Fatalf("want pending, got %s", sys.Lifecycle)
+	sys := joinOne(t, f,
+		service.NewJoinTokenInput{TenantID: "t1"},
+		domain.DeviceFacts{MachineID: "m1", Hostname: "web-1", FQDN: "web1.example.com"},
+	)
+	if sys.Lifecycle != domain.LifecycleEnrolled {
+		t.Fatalf("want enrolled after auto-join, got %s", sys.Lifecycle)
 	}
 
-	// Issue a token bound to the system, then enroll.
-	plaintext, _, err := f.IssueEnrollmentToken(ctx, "t1", sys.ID, time.Minute)
-	if err != nil {
-		t.Fatalf("issue token: %v", err)
-	}
-	res, err := f.Enroll(ctx, plaintext, "")
-	if err != nil {
-		t.Fatalf("enroll: %v", err)
-	}
-	if res.APIKey == "" {
-		t.Fatal("expected an API key from enrollment")
-	}
-	if res.System.Lifecycle != domain.LifecycleEnrolled {
-		t.Fatalf("want enrolled, got %s", res.System.Lifecycle)
-	}
-
-	// Token is single-use.
-	if _, err := f.Enroll(ctx, plaintext, ""); err == nil {
-		t.Fatal("expected consumed token to be rejected")
-	}
-
-	// Agent authenticates with its key.
-	id, err := f.AuthenticateAgent(ctx, res.APIKey)
-	if err != nil {
-		t.Fatalf("authenticate: %v", err)
-	}
-	if id.SystemID != sys.ID {
-		t.Fatalf("identity bound to wrong system: %s", id.SystemID)
-	}
-
-	// Heartbeat flips health to healthy.
-	err = f.RecordHeartbeat(ctx, "t1", &domain.Heartbeat{SystemID: sys.ID, AgentVersion: "1.0.0"})
-	if err != nil {
+	// Heartbeat flips health to healthy and records the agent version.
+	if err := f.RecordHeartbeat(ctx, "t1", &domain.Heartbeat{SystemID: sys.ID, AgentVersion: "1.0.0"}); err != nil {
 		t.Fatalf("heartbeat: %v", err)
 	}
 	got, err := f.GetSystem(ctx, "t1", sys.ID)
@@ -123,17 +82,25 @@ func TestEnrollAndHeartbeatFlow(t *testing.T) {
 	}
 }
 
-func TestEnroll_ExpiredToken(t *testing.T) {
+func TestAuthenticateAgent(t *testing.T) {
 	clk := &fixedClock{t: time.Unix(1_700_000_000, 0).UTC()}
 	f, _ := newFleet(t, clk)
 	ctx := context.Background()
 
-	sys, _ := f.RegisterSystem(ctx, domain.NewSystemInput{TenantID: "t1", Name: "n", FQDN: "n.example.com"})
-	plaintext, _, _ := f.IssueEnrollmentToken(ctx, "t1", sys.ID, time.Minute)
-
-	clk.t = clk.t.Add(2 * time.Minute) // past expiry
-	if _, err := f.Enroll(ctx, plaintext, ""); err == nil {
-		t.Fatal("expected expired token to be rejected")
+	key, _, _ := f.CreateJoinToken(ctx, service.NewJoinTokenInput{TenantID: "t1"})
+	res, err := f.JoinWithToken(ctx, key, domain.DeviceFacts{MachineID: "m1", Hostname: "h1"})
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	id, err := f.AuthenticateAgent(ctx, res.APIKey)
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	if id.SystemID != res.System.ID {
+		t.Fatalf("identity bound to wrong system: %s", id.SystemID)
+	}
+	if _, err := f.AuthenticateAgent(ctx, "bogus"); err == nil {
+		t.Fatal("expected bogus key to be rejected")
 	}
 }
 
@@ -142,8 +109,15 @@ func TestListSystems_Filter(t *testing.T) {
 	f, _ := newFleet(t, clk)
 	ctx := context.Background()
 
-	_, _ = f.RegisterSystem(ctx, domain.NewSystemInput{TenantID: "t1", Name: "a", FQDN: "a.ex", Region: "eu"})
-	_, _ = f.RegisterSystem(ctx, domain.NewSystemInput{TenantID: "t1", Name: "b", FQDN: "b.ex", Region: "us"})
+	// Two keys with different region presets, one device each.
+	_ = joinOne(t, f,
+		service.NewJoinTokenInput{TenantID: "t1", Region: "eu"},
+		domain.DeviceFacts{MachineID: "m-a", Hostname: "a", FQDN: "a.ex"},
+	)
+	_ = joinOne(t, f,
+		service.NewJoinTokenInput{TenantID: "t1", Region: "us"},
+		domain.DeviceFacts{MachineID: "m-b", Hostname: "b", FQDN: "b.ex"},
+	)
 
 	got, err := f.ListSystems(ctx, "t1", store.SystemFilter{Region: "eu"})
 	if err != nil {

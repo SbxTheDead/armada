@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"time"
 
 	"github.com/SbxTheDead/armada/internal/opclient"
 )
@@ -12,11 +11,9 @@ import (
 // runSystems dispatches the `systems` sub-subcommands.
 func runSystems(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: armada systems <register|list|get|inventory>")
+		return fmt.Errorf("usage: armada systems <list|get|inventory|approve>")
 	}
 	switch args[0] {
-	case "register":
-		return runSystemsRegister(ctx, args[1:])
 	case "list":
 		return runSystemsList(ctx, args[1:])
 	case "get":
@@ -28,46 +25,6 @@ func runSystems(ctx context.Context, args []string) error {
 	default:
 		return fmt.Errorf("unknown systems subcommand %q", args[0])
 	}
-}
-
-func runSystemsRegister(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("systems register", flag.ContinueOnError)
-	resolve := registerGlobals(fs)
-	name := fs.String("name", "", "human-readable name (required)")
-	fqdn := fs.String("fqdn", "", "fully-qualified domain name (required)")
-	project := fs.String("project", "", "project grouping")
-	region := fs.String("region", "", "region grouping")
-	environment := fs.String("environment", "", "environment grouping (prod/staging/...)")
-	provider := fs.String("provider", "", "cloud/host provider")
-	var tags stringSlice
-	fs.Var(&tags, "tag", "tag (repeatable)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	cfg, err := resolve()
-	if err != nil {
-		return err
-	}
-	if *name == "" || *fqdn == "" {
-		return fmt.Errorf("--name and --fqdn are required")
-	}
-
-	client := opclient.New(cfg)
-	sys, err := client.RegisterSystem(ctx, opclient.RegisterInput{
-		Name:        *name,
-		FQDN:        *fqdn,
-		Project:     *project,
-		Region:      *region,
-		Environment: *environment,
-		Provider:    *provider,
-		Tags:        tags,
-	})
-	if err != nil {
-		return err
-	}
-	fmt.Printf("registered system %s (%s)\n", sys.Name, sys.ID)
-	fmt.Printf("next: armada enroll %s\n", sys.ID)
-	return nil
 }
 
 func runSystemsList(ctx context.Context, args []string) error {
@@ -147,67 +104,4 @@ func runSystemsInventory(ctx context.Context, args []string) error {
 		return err
 	}
 	return printJSON(inv)
-}
-
-func runEnroll(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("enroll", flag.ContinueOnError)
-	resolve := registerGlobals(fs)
-	ttl := fs.Duration("ttl", 15*time.Minute, "token lifetime")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	id := fs.Arg(0)
-	if id == "" {
-		return fmt.Errorf("usage: armada enroll <system-id> [--ttl 15m]")
-	}
-	cfg, err := resolve()
-	if err != nil {
-		return err
-	}
-	res, err := opclient.New(cfg).IssueEnrollToken(ctx, id, *ttl)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("enrollment token (valid until %s):\n\n  %s\n\n",
-		res.ExpiresAt.Local().Format(time.RFC3339), res.Token)
-	fmt.Printf("on the device, run the agent with:\n")
-	fmt.Printf("  ARMADA_SERVER_URL=%s ARMADA_ENROLL_TOKEN=%s armada-agent\n", cfg.BaseURL, res.Token)
-	return nil
-}
-
-// runInstallCommand issues an enrollment token and prints ready-to-paste
-// one-liners that download, install, and enroll the correct agent on a device —
-// the server auto-detects OS/arch. This is the fast path for binding a device
-// or VM to the fleet.
-func runInstallCommand(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("install-command", flag.ContinueOnError)
-	resolve := registerGlobals(fs)
-	ttl := fs.Duration("ttl", 30*time.Minute, "token lifetime")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	id := fs.Arg(0)
-	if id == "" {
-		return fmt.Errorf("usage: armada install-command <system-id> [--ttl 30m]")
-	}
-	cfg, err := resolve()
-	if err != nil {
-		return err
-	}
-	res, err := opclient.New(cfg).IssueEnrollToken(ctx, id, *ttl)
-	if err != nil {
-		return err
-	}
-
-	server := cfg.BaseURL
-	fmt.Printf("Bind this device to the fleet (token valid until %s):\n\n",
-		res.ExpiresAt.Local().Format(time.RFC3339))
-	fmt.Printf("  Linux / macOS / BSD:\n")
-	fmt.Printf("    curl -fsSL '%s/manage?token=%s' | sh\n\n", server, res.Token)
-	fmt.Printf("  Windows (PowerShell, as Administrator):\n")
-	fmt.Printf("    iwr -useb '%s/manage/install.ps1?token=%s' | iex\n\n", server, res.Token)
-	fmt.Printf("The server auto-detects the device's OS and CPU architecture and\n")
-	fmt.Printf("installs the matching agent as a service. It appears in htop as\n")
-	fmt.Printf("\"MANAGEMENT AGENT\".\n")
-	return nil
 }

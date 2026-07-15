@@ -48,27 +48,6 @@ func New(cfg Config) *Client {
 	}
 }
 
-// RegisterInput mirrors the create-system request.
-type RegisterInput struct {
-	Name        string            `json:"name"`
-	FQDN        string            `json:"fqdn"`
-	Project     string            `json:"project,omitempty"`
-	Region      string            `json:"region,omitempty"`
-	Environment string            `json:"environment,omitempty"`
-	Provider    string            `json:"provider,omitempty"`
-	Tags        []string          `json:"tags,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"`
-}
-
-// RegisterSystem creates a new managed system and returns it.
-func (c *Client) RegisterSystem(ctx context.Context, in RegisterInput) (*domain.System, error) {
-	var sys domain.System
-	if err := c.do(ctx, http.MethodPost, "/api/v1/systems", in, &sys); err != nil {
-		return nil, err
-	}
-	return &sys, nil
-}
-
 // ListFilter narrows a systems query.
 type ListFilter struct {
 	Project     string
@@ -138,23 +117,6 @@ func (c *Client) GetMetrics(ctx context.Context, id string) (*domain.Heartbeat, 
 		return nil, err
 	}
 	return &hb, nil
-}
-
-// IssueTokenResult is the one-time enrollment token returned to the operator.
-type IssueTokenResult struct {
-	Token     string    `json:"token"`
-	SystemID  string    `json:"system_id"`
-	ExpiresAt time.Time `json:"expires_at"`
-}
-
-// IssueEnrollToken mints a single-use enrollment token for a system.
-func (c *Client) IssueEnrollToken(ctx context.Context, systemID string, ttl time.Duration) (*IssueTokenResult, error) {
-	body := map[string]int{"ttl_seconds": int(ttl.Seconds())}
-	var res IssueTokenResult
-	if err := c.do(ctx, http.MethodPost, "/api/v1/systems/"+url.PathEscape(systemID)+"/enroll-token", body, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
 }
 
 // --- Join tokens ---

@@ -1,10 +1,6 @@
 package domain
 
-import (
-	"fmt"
-	"strings"
-	"time"
-)
+import "time"
 
 // Health is the coarse operational state of a managed system, derived from
 // heartbeat recency and reported agent status.
@@ -65,48 +61,6 @@ type System struct {
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// NewSystemInput is the validated data required to register a system. The
-// agent identity and generated fields (ID, timestamps) are assigned by the
-// service, never supplied by the caller.
-type NewSystemInput struct {
-	TenantID    string
-	Name        string
-	FQDN        string
-	Project     string
-	Region      string
-	Environment string
-	Provider    string
-	Tags        []string
-	Labels      map[string]string
-}
-
-// Validate enforces the invariants that must hold for any system, regardless of
-// storage backend. It returns an error wrapping ErrValidation on the first
-// violation so transport layers can map it to a 4xx.
-func (in NewSystemInput) Validate() error {
-	if strings.TrimSpace(in.TenantID) == "" {
-		return fmt.Errorf("%w: tenant_id is required", ErrValidation)
-	}
-	if strings.TrimSpace(in.Name) == "" {
-		return fmt.Errorf("%w: name is required", ErrValidation)
-	}
-	if strings.TrimSpace(in.FQDN) == "" {
-		return fmt.Errorf("%w: fqdn is required", ErrValidation)
-	}
-	if len(in.Name) > 253 {
-		return fmt.Errorf("%w: name exceeds 253 characters", ErrValidation)
-	}
-	if len(in.FQDN) > 253 {
-		return fmt.Errorf("%w: fqdn exceeds 253 characters", ErrValidation)
-	}
-	for _, t := range in.Tags {
-		if strings.TrimSpace(t) == "" {
-			return fmt.Errorf("%w: tags must not be empty", ErrValidation)
-		}
-	}
-	return nil
 }
 
 // EvaluateHealth derives Health from heartbeat recency. interval is the agent's

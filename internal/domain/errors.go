@@ -17,10 +17,6 @@ var (
 	// use errors.Is(err, ErrValidation) and surface the wrapped message.
 	ErrValidation = errors.New("validation failed")
 
-	// ErrEnrollmentToken is returned when an enrollment token is unknown,
-	// expired, revoked, or already consumed.
-	ErrEnrollmentToken = errors.New("invalid enrollment token")
-
 	// ErrJoinToken is returned when a reusable join token is unknown, expired,
 	// revoked, or has exhausted its use cap.
 	ErrJoinToken = errors.New("invalid join token")

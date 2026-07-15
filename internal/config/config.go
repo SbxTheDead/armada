@@ -40,7 +40,6 @@ func LoadServer() Server {
 type Agent struct {
 	ServerURL         string
 	JoinToken         string // reusable join key (zero-touch onboarding)
-	EnrollToken       string // single-use per-device enrollment token
 	MachineID         string // override the auto-derived machine id (cloned images/containers)
 	FQDN              string
 	APIKey            string // populated after enrollment
@@ -54,7 +53,6 @@ func LoadAgent() Agent {
 	return Agent{
 		ServerURL:         env("ARMADA_SERVER_URL", "http://localhost:8080"),
 		JoinToken:         os.Getenv("ARMADA_JOIN_TOKEN"),
-		EnrollToken:       os.Getenv("ARMADA_ENROLL_TOKEN"),
 		MachineID:         os.Getenv("ARMADA_MACHINE_ID"),
 		FQDN:              os.Getenv("ARMADA_FQDN"),
 		APIKey:            os.Getenv("ARMADA_API_KEY"),

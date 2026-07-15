@@ -40,20 +40,6 @@ func NewClient(baseURL, apiKey, version string) *Client {
 // SetAPIKey updates the bearer key after enrollment.
 func (c *Client) SetAPIKey(key string) { c.apiKey = key }
 
-// Enroll redeems an enrollment token and returns the issued system ID and API
-// key. It is called once, before the agent has credentials.
-func (c *Client) Enroll(ctx context.Context, token, fqdn string) (systemID, apiKey string, err error) {
-	body := map[string]string{"token": token, "fqdn": fqdn}
-	var resp struct {
-		SystemID string `json:"system_id"`
-		APIKey   string `json:"api_key"`
-	}
-	if err := c.do(ctx, http.MethodPost, "/agent/v1/enroll", body, false, &resp); err != nil {
-		return "", "", err
-	}
-	return resp.SystemID, resp.APIKey, nil
-}
-
 // Join redeems a reusable join token, self-registering the device from its
 // reported facts. Returns the issued system ID and bearer API key.
 func (c *Client) Join(ctx context.Context, joinToken string, facts domain.DeviceFacts) (systemID, apiKey string, err error) {

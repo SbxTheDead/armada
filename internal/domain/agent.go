@@ -2,33 +2,6 @@ package domain
 
 import "time"
 
-// EnrollmentToken is a short-lived, single-use secret an operator hands to a
-// host so its agent can bind itself to a pre-registered System. Tokens are
-// scoped to a tenant and, optionally, to a specific system.
-//
-// Security notes:
-//   - Only a hash of the token is stored; the plaintext is shown to the
-//     operator exactly once at creation time.
-//   - Tokens expire and are consumed on first successful enrollment.
-type EnrollmentToken struct {
-	ID         string     `json:"id"`
-	TenantID   string     `json:"tenant_id"`
-	SystemID   string     `json:"system_id,omitempty"` // optional pre-binding
-	Hash       string     `json:"-"`                   // never serialized
-	ExpiresAt  time.Time  `json:"expires_at"`
-	ConsumedAt *time.Time `json:"consumed_at,omitempty"`
-	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-}
-
-// Active reports whether the token may still be redeemed at time now.
-func (t EnrollmentToken) Active(now time.Time) bool {
-	if t.RevokedAt != nil || t.ConsumedAt != nil {
-		return false
-	}
-	return now.Before(t.ExpiresAt)
-}
-
 // AgentIdentity is the credential material an enrolled agent uses to
 // authenticate subsequent requests (heartbeat, inventory, job results). The
 // APIKeyHash is a hash of a bearer secret returned to the agent once at

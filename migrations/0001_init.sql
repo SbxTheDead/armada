@@ -47,19 +47,6 @@ CREATE INDEX idx_systems_tenant_health ON systems (tenant_id, health);
 CREATE INDEX idx_systems_tags          ON systems USING GIN (tags);
 CREATE INDEX idx_systems_labels        ON systems USING GIN (labels);
 
-CREATE TABLE enrollment_tokens (
-    id          TEXT PRIMARY KEY,
-    tenant_id   TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    system_id   TEXT REFERENCES systems(id) ON DELETE CASCADE,
-    token_hash  TEXT NOT NULL UNIQUE,      -- sha256 hex of the one-time secret
-    expires_at  TIMESTAMPTZ NOT NULL,
-    consumed_at TIMESTAMPTZ,
-    revoked_at  TIMESTAMPTZ,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX idx_enrollment_tokens_tenant ON enrollment_tokens (tenant_id);
-
 CREATE TABLE agent_identities (
     system_id    TEXT PRIMARY KEY REFERENCES systems(id) ON DELETE CASCADE,
     tenant_id    TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
