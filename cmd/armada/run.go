@@ -218,7 +218,7 @@ func runModules(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(mods) == 0 {
-		fmt.Println("no modules published. Drop a compiled <name>.wasm into the server's module dir.")
+		fmt.Println("no modules published. Add a native module dir <name>/<os>-<arch> or a <name>.py to the server's module dir.")
 		return nil
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)

@@ -11,7 +11,7 @@ import (
 
 // RunModule creates a job that runs a module on every system matching the
 // filter, fanning out one task per device. runtime tells each agent how to
-// execute the module (wasm or python). It returns the job and the number of
+// execute the module (native or python). It returns the job and the number of
 // devices targeted.
 func (f *Fleet) RunModule(ctx context.Context, tenantID, module string, runtime domain.Runtime, args []string, filter store.SystemFilter) (*domain.Job, error) {
 	if strings.TrimSpace(module) == "" {

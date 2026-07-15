@@ -1,8 +1,7 @@
 // Package pyrun executes Python module scripts on the device using its installed
-// Python interpreter. Unlike WASM modules, Python modules run with the agent's
-// full privileges (no sandbox) and require Python to be present — if none is
-// found the task fails with a clear message. A future python.wasm runtime can
-// replace this behind the same Result interface for devices without Python.
+// Python interpreter. Python modules run with the agent's full privileges (no
+// sandbox) and require Python to be present — if none is found the task fails
+// with a clear message. For devices without Python, use a native module.
 package pyrun
 
 import (
@@ -15,7 +14,7 @@ import (
 	"time"
 )
 
-// Result mirrors wasmrun.Result so callers can treat runtimes uniformly.
+// Result is the outcome of running a Python module.
 type Result struct {
 	ExitCode int
 	Output   string

@@ -6,15 +6,12 @@ import "time"
 type Runtime string
 
 const (
-	// RuntimeWASM runs a WebAssembly module (compiled from C, Rust, …) in the
-	// agent's embedded, sandboxed wazero runtime.
-	RuntimeWASM Runtime = "wasm"
-	// RuntimePython runs a .py script via the device's Python interpreter.
-	RuntimePython Runtime = "python"
 	// RuntimeNative runs a natively-compiled binary matching the device's
 	// OS/CPU. The agent downloads the build for its own GOOS/GOARCH and executes
-	// it directly (no sandbox).
+	// it directly. This is the primary runtime for C modules.
 	RuntimeNative Runtime = "native"
+	// RuntimePython runs a .py script via the device's Python interpreter.
+	RuntimePython Runtime = "python"
 )
 
 // A Job is an operator-issued request to run a module across a set of devices.
@@ -24,7 +21,7 @@ type Job struct {
 	ID       string   `json:"id"`
 	TenantID string   `json:"tenant_id"`
 	Module   string   `json:"module"`         // module name to execute on each device
-	Runtime  Runtime  `json:"runtime"`        // how the module runs (wasm|python)
+	Runtime  Runtime  `json:"runtime"`        // how the module runs (native|python)
 	Args     []string `json:"args,omitempty"` // arguments passed to the module
 	Selector string   `json:"selector"`       // human description of the target filter
 	Total    int      `json:"total"`          // number of tasks fanned out

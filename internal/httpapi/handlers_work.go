@@ -18,8 +18,7 @@ import (
 
 // moduleExt maps a served file extension to the runtime that executes it.
 var moduleExt = map[string]domain.Runtime{
-	".wasm": domain.RuntimeWASM,
-	".py":   domain.RuntimePython,
+	".py": domain.RuntimePython,
 }
 
 type moduleInfo struct {
@@ -71,13 +70,11 @@ func (s *Server) handleListModules(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"modules": mods, "count": len(mods)})
 }
 
-// moduleRuntime resolves a module name to its runtime: a <name>.wasm or
-// <name>.py file, or a <name>/ directory of native per-arch binaries.
+// moduleRuntime resolves a module name to its runtime: a <name>.py file, or a
+// <name>/ directory of native per-arch binaries.
 func (s *Server) moduleRuntime(name string) (domain.Runtime, bool) {
-	for _, ext := range []string{".wasm", ".py"} {
-		if fi, err := os.Stat(filepath.Join(s.moduleDir, name+ext)); err == nil && !fi.IsDir() {
-			return moduleExt[ext], true
-		}
+	if fi, err := os.Stat(filepath.Join(s.moduleDir, name+".py")); err == nil && !fi.IsDir() {
+		return domain.RuntimePython, true
 	}
 	if fi, err := os.Stat(filepath.Join(s.moduleDir, name)); err == nil && fi.IsDir() {
 		if len(s.nativeTargets(name)) > 0 {
@@ -221,8 +218,6 @@ func (s *Server) handleDownloadModule(w http.ResponseWriter, r *http.Request) {
 	// Resolve the concrete file to serve.
 	var relPath, contentType string
 	switch runtime {
-	case domain.RuntimeWASM:
-		relPath, contentType = name+".wasm", "application/wasm"
 	case domain.RuntimePython:
 		relPath, contentType = name+".py", "text/x-python"
 	case domain.RuntimeNative:

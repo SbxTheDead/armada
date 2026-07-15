@@ -23,7 +23,7 @@ type Server struct {
 	// control plane serves from /manage/bin/... . Populate it with `make agents`.
 	AgentDistDir string
 
-	// ModuleDir is the directory of compiled WASM modules the control plane
+	// ModuleDir is the directory of modules the control plane
 	// serves to agents for task execution.
 	ModuleDir string
 }
@@ -49,7 +49,7 @@ type Agent struct {
 	FQDN              string
 	APIKey            string // populated after enrollment
 	StatePath         string // where the agent persists its identity
-	ModuleCacheDir    string // where the agent caches downloaded WASM modules
+	ModuleCacheDir    string // where the agent caches downloaded modules
 	PythonInterpreter string // override Python interpreter for .py modules
 	HeartbeatInterval time.Duration
 	InventoryInterval time.Duration

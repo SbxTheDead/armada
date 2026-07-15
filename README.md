@@ -168,14 +168,13 @@ the Docker image bakes every target in automatically.
 ## Running work on devices (modules)
 
 Beyond seeing devices, you can *act* on them by running **modules** — small
-programs the agent executes on each device. Three runtimes are supported, and
+programs the agent executes on each device. Two runtimes are supported, and
 `armada run <name>` picks whichever the module was published as:
 
-| Runtime  | Author in            | How it runs on the device                              |
-| -------- | -------------------- | ------------------------------------------------------ |
-| `native` | C (gcc/clang)        | cross-compiled per-arch binary, run directly (fastest) |
-| `python` | Python               | the device's `python3` interpreter                     |
-| `wasm`   | C (WASI SDK)         | sandboxed in-agent via wazero — one file, all arches   |
+| Runtime  | Author in     | How it runs on the device                              |
+| -------- | ------------- | ------------------------------------------------------ |
+| `native` | C (gcc/clang) | cross-compiled per-arch binary, run directly (fastest) |
+| `python` | Python        | the device's `python3` interpreter                     |
 
 The **native** path is the one to reach for with C: write normal C, cross-compile
 it to a static binary per architecture, and the agent downloads the build
@@ -198,12 +197,12 @@ armada jobs get <id>           # per-device exit codes + captured output
 Under the hood: `run` creates a **job** that fans out to one **task** per matched
 device; each agent polls, downloads the module (native fetches its own
 `os/arch`), runs it with the matching runtime, and returns the exit code plus
-captured stdout/stderr. See [`modules/README.md`](modules/README.md) for all
-three build/publish flows.
+captured stdout/stderr. See [`modules/README.md`](modules/README.md) for both
+build/publish flows.
 
-> Modules run with the agent's privileges and are not sandboxed (except WASM) —
-> signing, allowlisting, approval gates, and sandboxing are deferred to
-> production hardening.
+> Modules run with the agent's privileges and are not sandboxed — signing,
+> allowlisting, approval gates, and sandboxing are deferred to production
+> hardening.
 
 ---
 
@@ -273,7 +272,7 @@ Agent endpoints:
 | POST   | `/agent/v1/inventory`           | agent bearer key  | upload inventory           |
 | GET    | `/agent/v1/tasks`               | agent bearer key  | claim pending tasks        |
 | POST   | `/agent/v1/tasks/{id}/result`   | agent bearer key  | report task result         |
-| GET    | `/agent/v1/modules/{name}`      | agent bearer key  | download a module `.wasm`  |
+| GET    | `/agent/v1/modules/{name}`      | agent bearer key  | download a module (native `?os=&arch=`, or python) |
 
 Unauthenticated: `GET /healthz`, `GET /readyz`, `GET /manage...` (install).
 
@@ -339,9 +338,10 @@ management agent, zero-touch join (reusable keys, auto-register, machine-id
 dedupe, approval gate), heartbeat/health, inventory, live monitor, self-hosting
 one-command install (`/manage`, auto OS/arch detection, systemd/OpenRC/
 Scheduled-Task), `MANAGEMENT AGENT` process name, **module execution**
-(task channel: `armada run <module>` fans out to devices, WASM modules written
-in C run sandboxed via wazero and return results), in-memory storage, Docker
-packaging, cross-compilation across the architecture matrix.
+(task channel: `armada run <module>` fans out to devices; modules are native C
+binaries or Python scripts, run per-device with results returned), in-memory
+storage, Docker packaging, cross-compilation across the architecture matrix.
+Zero external dependencies (standard library only).
 
 Designed-for and next up (adapter-layer work, no core changes):
 

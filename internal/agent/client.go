@@ -90,7 +90,7 @@ func (c *Client) CompleteTask(ctx context.Context, taskID string, exitCode int, 
 	return c.do(ctx, http.MethodPost, "/agent/v1/tasks/"+taskID+"/result", body, true, nil)
 }
 
-// FetchModule downloads a module's bytes by name (WASM or Python).
+// FetchModule downloads a Python module's bytes by name.
 func (c *Client) FetchModule(ctx context.Context, name string) ([]byte, error) {
 	return c.fetchModule(ctx, "/agent/v1/modules/"+name)
 }

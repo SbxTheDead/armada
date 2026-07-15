@@ -4,9 +4,8 @@
 // executable, runs it, and captures its output.
 //
 // Native modules run with the agent's full privileges and no sandbox — they are
-// the fastest, most capable runtime and the one to use when a module needs
-// unrestricted native access. (WASM trades that for a sandbox; Python trades it
-// for needing an interpreter.)
+// the fastest, most capable runtime and the primary path for C modules. (The
+// Python runtime trades native access for needing an interpreter on the device.)
 package nativerun
 
 import (

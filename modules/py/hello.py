@@ -2,9 +2,9 @@
 """hello.py — example Armada Python module.
 
 A Python module is just a script. It runs on the device with the device's
-Python interpreter, with full access (no sandbox — unlike WASM modules). Its
-exit code is the task result; everything it prints is captured and returned to
-the operator. Arguments after the module name are passed as sys.argv[1:].
+Python interpreter, with full access. Its exit code is the task result;
+everything it prints is captured and returned to the operator. Arguments after
+the module name are passed as sys.argv[1:].
 
 Publish it by dropping it into the server's module dir as <name>.py, then:
     armada run hello --all

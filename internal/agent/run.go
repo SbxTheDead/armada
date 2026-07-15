@@ -12,7 +12,6 @@ import (
 	"github.com/SbxTheDead/armada/internal/agent/inventory"
 	"github.com/SbxTheDead/armada/internal/agent/nativerun"
 	"github.com/SbxTheDead/armada/internal/agent/pyrun"
-	"github.com/SbxTheDead/armada/internal/agent/wasmrun"
 	"github.com/SbxTheDead/armada/internal/config"
 	"github.com/SbxTheDead/armada/internal/domain"
 )
@@ -48,7 +47,7 @@ func Run(ctx context.Context, cfg config.Agent, log *slog.Logger, version string
 	// Send an inventory snapshot immediately, then on its own slower cadence.
 	sendInventory(ctx, client, st.SystemID, log)
 
-	rs := runners{wasm: wasmrun.New(), py: pyrun.New(cfg.PythonInterpreter), native: nativerun.New()}
+	rs := runners{py: pyrun.New(cfg.PythonInterpreter), native: nativerun.New()}
 
 	hbTicker := time.NewTicker(cfg.HeartbeatInterval)
 	defer hbTicker.Stop()

@@ -2,19 +2,18 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"runtime"
 
 	"github.com/SbxTheDead/armada/internal/agent/nativerun"
 	"github.com/SbxTheDead/armada/internal/agent/pyrun"
-	"github.com/SbxTheDead/armada/internal/agent/wasmrun"
 	"github.com/SbxTheDead/armada/internal/domain"
 )
 
 // runners bundles the per-runtime executors so the task loop can dispatch by
 // the module's declared runtime.
 type runners struct {
-	wasm   *wasmrun.Runner
 	py     *pyrun.Runner
 	native *nativerun.Runner
 }
@@ -64,9 +63,8 @@ func runOneTask(ctx context.Context, client *Client, rs runners, log *slog.Logge
 	case domain.RuntimeNative:
 		res, e := rs.native.Run(ctx, body, task.Args)
 		exit, output, runErr = res.ExitCode, res.Output, e
-	default: // wasm is the default runtime
-		res, e := rs.wasm.Run(ctx, body, task.Args)
-		exit, output, runErr = res.ExitCode, res.Output, e
+	default:
+		runErr = fmt.Errorf("unsupported runtime %q", task.Runtime)
 	}
 	if runErr != nil {
 		report(ctx, client, log, task.ID, 0, output, "run module: "+runErr.Error())

@@ -1,9 +1,8 @@
 /*
  * ftp.c — native Armada module: install and enable an FTP server.
  *
- * This is the NATIVE version (compiled per-arch by build-native.sh). Unlike the
- * WASM version (install_ftp.c), it runs as a normal native binary with full
- * access, so it uses the device shell directly via system(). Its stdout is
+ * Compiled per-arch by build-native.sh, it runs as a normal native binary with
+ * full access, using the device shell directly via system(). Its stdout is
  * captured and its exit code is the task result.
  *
  *   cd modules && ./build-native.sh ftp src/ftp.c

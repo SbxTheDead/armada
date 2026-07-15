@@ -20,7 +20,7 @@ type Server struct {
 	log           *slog.Logger
 	operatorToken string // optional static operator bearer (scaffold auth)
 	distDir       string // directory of cross-compiled agent binaries to serve
-	moduleDir     string // directory of compiled WASM modules to serve
+	moduleDir     string // directory of modules to serve
 }
 
 // Config configures the HTTP server.
