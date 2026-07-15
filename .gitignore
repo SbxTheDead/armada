@@ -1,0 +1,10 @@
+# Build output
+/bin/
+coverage.out
+
+# Agent local state (contains the device API key)
+armada-agent.json
+*-state.json
+
+# Env files
+.env

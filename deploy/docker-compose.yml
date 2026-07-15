@@ -1,0 +1,53 @@
+# docker-compose for running the Armada control plane on a VPS.
+#
+# There is no web UI — you manage the fleet with the `armada` CLI, which is
+# baked into the same image (run it via `docker compose exec server armada ...`)
+# or installed separately on your workstation.
+#
+# PostgreSQL and Redis are included for the production storage/cache path. The
+# server currently defaults to its in-memory store; set ARMADA_DATABASE_URL to
+# switch to Postgres once the pgx adapter is wired in (see internal/store).
+
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: armada-server:local
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      ARMADA_ADDR: ":8080"
+      ARMADA_OPERATOR_TOKEN: "${ARMADA_OPERATOR_TOKEN:?set an operator token}"
+      ARMADA_HEARTBEAT_INTERVAL: "60s"
+      ARMADA_DATABASE_URL: "postgres://armada:armada@postgres:5432/armada?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: armada
+      POSTGRES_PASSWORD: armada
+      POSTGRES_DB: armada
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U armada"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+volumes:
+  pgdata:
