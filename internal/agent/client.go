@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/SbxTheDead/armada/internal/domain"
@@ -89,21 +90,32 @@ func (c *Client) CompleteTask(ctx context.Context, taskID string, exitCode int, 
 	return c.do(ctx, http.MethodPost, "/agent/v1/tasks/"+taskID+"/result", body, true, nil)
 }
 
-// FetchModule downloads a module's WASM bytes by name.
+// FetchModule downloads a module's bytes by name (WASM or Python).
 func (c *Client) FetchModule(ctx context.Context, name string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/agent/v1/modules/"+name, nil)
+	return c.fetchModule(ctx, "/agent/v1/modules/"+name)
+}
+
+// FetchNativeBinary downloads the native module build matching the given
+// OS/arch (the caller passes its own runtime.GOOS/GOARCH).
+func (c *Client) FetchNativeBinary(ctx context.Context, name, goos, goarch string) ([]byte, error) {
+	q := url.Values{"os": {goos}, "arch": {goarch}}
+	return c.fetchModule(ctx, "/agent/v1/modules/"+name+"?"+q.Encode())
+}
+
+func (c *Client) fetchModule(ctx context.Context, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch module %s: %w", name, err)
+		return nil, fmt.Errorf("fetch module: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("fetch module %s: server returned %d: %s", name, resp.StatusCode, bytes.TrimSpace(msg))
+		return nil, fmt.Errorf("fetch module: server returned %d: %s", resp.StatusCode, bytes.TrimSpace(msg))
 	}
 	return io.ReadAll(resp.Body)
 }

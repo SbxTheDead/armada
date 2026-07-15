@@ -25,8 +25,9 @@ var moduleExt = map[string]domain.Runtime{
 type moduleInfo struct {
 	Name    string         `json:"name"`
 	Runtime domain.Runtime `json:"runtime"`
-	Size    int64          `json:"size"`
-	SHA256  string         `json:"sha256"`
+	Size    int64          `json:"size,omitempty"`
+	SHA256  string         `json:"sha256,omitempty"`
+	Targets []string       `json:"targets,omitempty"` // native: available os-arch builds
 }
 
 func (s *Server) handleListModules(w http.ResponseWriter, r *http.Request) {
@@ -39,6 +40,16 @@ func (s *Server) handleListModules(w http.ResponseWriter, r *http.Request) {
 	var mods []moduleInfo
 	for _, e := range entries {
 		if e.IsDir() {
+			// A subdirectory is a native module: one binary per os-arch.
+			targets := s.nativeTargets(e.Name())
+			if len(targets) == 0 {
+				continue
+			}
+			mods = append(mods, moduleInfo{
+				Name:    e.Name(),
+				Runtime: domain.RuntimeNative,
+				Targets: targets,
+			})
 			continue
 		}
 		rt, ok := moduleExt[strings.ToLower(filepath.Ext(e.Name()))]
@@ -60,16 +71,41 @@ func (s *Server) handleListModules(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"modules": mods, "count": len(mods)})
 }
 
-// resolveModule finds a published module by name, returning its filename and
-// runtime. It prefers .wasm over .py if both exist.
-func (s *Server) resolveModule(name string) (filename string, runtime domain.Runtime, err error) {
+// moduleRuntime resolves a module name to its runtime: a <name>.wasm or
+// <name>.py file, or a <name>/ directory of native per-arch binaries.
+func (s *Server) moduleRuntime(name string) (domain.Runtime, bool) {
 	for _, ext := range []string{".wasm", ".py"} {
-		fn := name + ext
-		if _, err := os.Stat(filepath.Join(s.moduleDir, fn)); err == nil {
-			return fn, moduleExt[ext], nil
+		if fi, err := os.Stat(filepath.Join(s.moduleDir, name+ext)); err == nil && !fi.IsDir() {
+			return moduleExt[ext], true
 		}
 	}
-	return "", "", os.ErrNotExist
+	if fi, err := os.Stat(filepath.Join(s.moduleDir, name)); err == nil && fi.IsDir() {
+		if len(s.nativeTargets(name)) > 0 {
+			return domain.RuntimeNative, true
+		}
+	}
+	return "", false
+}
+
+// nativeTargets lists the "os-arch" targets a native module directory provides.
+func (s *Server) nativeTargets(name string) []string {
+	entries, err := os.ReadDir(filepath.Join(s.moduleDir, name))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		// File names are "<os>-<arch>" or "<os>-<arch>.exe".
+		t := strings.TrimSuffix(e.Name(), ".exe")
+		if strings.Count(t, "-") >= 1 {
+			out = append(out, t)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // --- Operator: jobs ---
@@ -91,8 +127,8 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Resolve the module to its runtime (and confirm it exists) before dispatch.
-	_, runtime, err := s.resolveModule(req.Module)
-	if err != nil {
+	runtime, ok := s.moduleRuntime(req.Module)
+	if !ok {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown module %q; run 'armada modules' to list published modules", req.Module))
 		return
 	}
@@ -176,12 +212,40 @@ func (s *Server) handleDownloadModule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid module name")
 		return
 	}
-	filename, runtime, err := s.resolveModule(name)
-	if err != nil {
+	runtime, ok := s.moduleRuntime(name)
+	if !ok {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("module %q not found", name))
 		return
 	}
-	f, err := os.Open(filepath.Join(s.moduleDir, filename))
+
+	// Resolve the concrete file to serve.
+	var relPath, contentType string
+	switch runtime {
+	case domain.RuntimeWASM:
+		relPath, contentType = name+".wasm", "application/wasm"
+	case domain.RuntimePython:
+		relPath, contentType = name+".py", "text/x-python"
+	case domain.RuntimeNative:
+		// The agent asks for the build matching its own OS/CPU.
+		goos := clean(r.URL.Query().Get("os"))
+		goarch := clean(r.URL.Query().Get("arch"))
+		if goos == "" || goarch == "" {
+			writeError(w, http.StatusBadRequest, "native module requires os and arch query params")
+			return
+		}
+		file := goos + "-" + goarch
+		if goos == "windows" {
+			file += ".exe"
+		}
+		relPath = filepath.Join(name, file)
+		contentType = "application/octet-stream"
+		if _, err := os.Stat(filepath.Join(s.moduleDir, relPath)); err != nil {
+			writeError(w, http.StatusNotFound, fmt.Sprintf("module %q has no build for %s/%s (available: %v)", name, goos, goarch, s.nativeTargets(name)))
+			return
+		}
+	}
+
+	f, err := os.Open(filepath.Join(s.moduleDir, relPath))
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("module %q not found", name))
 		return
@@ -192,13 +256,17 @@ func (s *Server) handleDownloadModule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "cannot stat module")
 		return
 	}
-	if runtime == domain.RuntimeWASM {
-		w.Header().Set("Content-Type", "application/wasm")
-	} else {
-		w.Header().Set("Content-Type", "text/x-python")
-	}
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Armada-Runtime", string(runtime))
-	http.ServeContent(w, r, filename, info.ModTime(), f)
+	http.ServeContent(w, r, filepath.Base(relPath), info.ModTime(), f)
+}
+
+// clean restricts a query value to a safe path segment (no separators/dots).
+func clean(s string) string {
+	if strings.ContainsAny(s, `/\.`) {
+		return ""
+	}
+	return s
 }
 
 func fileSHA256(path string) string {

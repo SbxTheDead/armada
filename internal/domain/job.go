@@ -11,6 +11,10 @@ const (
 	RuntimeWASM Runtime = "wasm"
 	// RuntimePython runs a .py script via the device's Python interpreter.
 	RuntimePython Runtime = "python"
+	// RuntimeNative runs a natively-compiled binary matching the device's
+	// OS/CPU. The agent downloads the build for its own GOOS/GOARCH and executes
+	// it directly (no sandbox).
+	RuntimeNative Runtime = "native"
 )
 
 // A Job is an operator-issued request to run a module across a set of devices.

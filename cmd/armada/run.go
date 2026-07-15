@@ -222,9 +222,13 @@ func runModules(ctx context.Context, args []string) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "MODULE\tRUNTIME\tSIZE\tSHA256")
+	fmt.Fprintln(tw, "MODULE\tRUNTIME\tDETAIL")
 	for _, m := range mods {
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", m.Name, m.Runtime, m.Size, short(m.SHA256))
+		detail := fmt.Sprintf("%d bytes  %s", m.Size, short(m.SHA256))
+		if m.Runtime == "native" {
+			detail = fmt.Sprintf("%d builds: %s", len(m.Targets), strings.Join(m.Targets, " "))
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", m.Name, m.Runtime, detail)
 	}
 	_ = tw.Flush()
 	return nil

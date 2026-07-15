@@ -2,8 +2,9 @@
 /bin/
 coverage.out
 
-# Compiled module artifacts (build from modules/src into modules/dist)
-/modules/dist/*.wasm
+# Compiled module artifacts (build sources into modules/dist)
+/modules/dist/*
+!/modules/dist/.gitkeep
 # Agent module cache
 /armada-modules/
 

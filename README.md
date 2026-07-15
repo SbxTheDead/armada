@@ -168,43 +168,42 @@ the Docker image bakes every target in automatically.
 ## Running work on devices (modules)
 
 Beyond seeing devices, you can *act* on them by running **modules** — small
-programs compiled to WebAssembly that the agent executes, sandboxed, on each
-device. Because they're WASM, one `.wasm` runs on every CPU/OS in the fleet.
+programs the agent executes on each device. Three runtimes are supported, and
+`armada run <name>` picks whichever the module was published as:
 
-Modules are written in **C** (see [`modules/`](modules/README.md)) and compiled
-once with the WASI SDK:
+| Runtime  | Author in            | How it runs on the device                              |
+| -------- | -------------------- | ------------------------------------------------------ |
+| `native` | C (gcc/clang)        | cross-compiled per-arch binary, run directly (fastest) |
+| `python` | Python               | the device's `python3` interpreter                     |
+| `wasm`   | C (WASI SDK)         | sandboxed in-agent via wazero — one file, all arches   |
+
+The **native** path is the one to reach for with C: write normal C, cross-compile
+it to a static binary per architecture, and the agent downloads the build
+matching its own CPU:
 
 ```c
-#include "armada.h"
-int main(void) {
-    if (armada_have("apt-get"))
-        return armada_exec("apt-get install -y vsftpd && systemctl enable --now vsftpd");
-    return armada_exec("apk add vsftpd");
-}
+// modules/src/ftp.c — normal C, uses the device shell directly
+#include <stdlib.h>
+int main(void) { return system("apt-get install -y vsftpd"); }
 ```
 
-Drop the compiled `ftp.wasm` into the server's module dir, then run it fleet-wide:
-
 ```bash
-armada modules                 # list published modules
-armada run ftp --all           # dispatch to every device (or --region eu / --tag db)
-armada run update --tag prod    # e.g. an "update everything" module, prod only
+cd modules && ./build-native.sh ftp src/ftp.c   # -> dist/ftp/<os>-<arch>
+armada modules                 # ftp shows runtime "native" + its arch builds
+armada run ftp --all           # every device pulls its arch's binary and runs it
+armada run backup --tag prod    # a Python module (modules/dist/backup.py), prod only
 armada jobs get <id>           # per-device exit codes + captured output
 ```
 
 Under the hood: `run` creates a **job** that fans out to one **task** per matched
-device; each agent polls, downloads the module, runs it via the embedded
-[wazero](https://wazero.io) runtime (pure Go, no CGO — runs on the whole arch
-matrix), and returns the exit code plus captured stdout/stderr and the output of
-every command the module ran.
+device; each agent polls, downloads the module (native fetches its own
+`os/arch`), runs it with the matching runtime, and returns the exit code plus
+captured stdout/stderr. See [`modules/README.md`](modules/README.md) for all
+three build/publish flows.
 
-The host ABI a module calls: `armada_exec(cmd)` (run a shell command, returns
-exit code), `armada_log(msg)`, `armada_have(bin)`. See
-[`modules/README.md`](modules/README.md) for the build + publish flow.
-
-> Modules currently run with the agent's privileges and the host commands they
-> invoke are not sandboxed — signing, allowlisting, approval gates, and command
-> sandboxing are deferred to production hardening.
+> Modules run with the agent's privileges and are not sandboxed (except WASM) —
+> signing, allowlisting, approval gates, and sandboxing are deferred to
+> production hardening.
 
 ---
 

@@ -1,15 +1,47 @@
 # Armada modules
 
-A **module** is a small program the agent runs on a device to do work. Two
-runtimes are supported, chosen automatically by the file extension:
+A **module** is a small program the agent runs on a device to do work. Three
+runtimes are supported, chosen automatically from what you publish:
 
-| File        | Runtime | Runs how                                             |
-| ----------- | ------- | ---------------------------------------------------- |
-| `<name>.wasm` | WASM  | sandboxed, in-agent via wazero — one file, all arches |
-| `<name>.py`   | Python | on the device's Python interpreter (no sandbox)      |
+| Published as                    | Runtime | Runs how                                              |
+| ------------------------------- | ------- | ----------------------------------------------------- |
+| `<name>/<os>-<arch>` binaries   | native  | native binary matching the device's CPU (no sandbox)  |
+| `<name>.py`                     | python  | the device's Python interpreter (no sandbox)          |
+| `<name>.wasm`                   | wasm    | sandboxed, in-agent via wazero — one file, all arches |
 
-`armada run <name>` picks the runtime from whichever file is published; you
-don't specify it. `armada modules` shows each module's runtime.
+`armada run <name>` picks the runtime from what's published; you don't specify
+it. `armada modules` shows each module's runtime.
+
+## Native modules (C) — recommended for C
+
+Written in **C** (or anything gcc/clang compiles) and cross-compiled to a
+statically-linked binary per architecture. The control plane serves the build
+matching each device's CPU; the agent downloads and runs it directly — full
+native speed and access, no sandbox, no interpreter.
+
+Publish under a per-module directory, one file per target:
+
+```
+modules/dist/ftp/
+  linux-amd64
+  linux-arm64
+  linux-arm
+  linux-mips
+  linux-riscv64
+  windows-amd64.exe
+```
+
+Build them with the included cross-compile script (install the toolchains it
+lists first):
+
+```bash
+cd modules
+./build-native.sh ftp src/ftp.c    # -> dist/ftp/<os>-<arch>
+armada run ftp --all
+```
+
+The agent requests `/agent/v1/modules/ftp?os=linux&arch=arm64`; if a device's
+arch has no build, its task fails with the list of available targets.
 
 ## WASM modules (C)
 
