@@ -75,13 +75,15 @@ func externalBaseURL(r *http.Request) string {
 }
 
 func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
-	script := renderInstallScript(externalBaseURL(r), r.URL.Query().Get("token"))
+	q := r.URL.Query()
+	script := renderInstallScript(externalBaseURL(r), q.Get("token"), q.Get("join"))
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	_, _ = w.Write([]byte(script))
 }
 
 func (s *Server) handleInstallPowerShell(w http.ResponseWriter, r *http.Request) {
-	script := renderInstallPowerShell(externalBaseURL(r), r.URL.Query().Get("token"))
+	q := r.URL.Query()
+	script := renderInstallPowerShell(externalBaseURL(r), q.Get("token"), q.Get("join"))
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte(script))
 }

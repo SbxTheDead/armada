@@ -17,7 +17,7 @@ import (
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	db := memory.New()
-	fleet := service.NewFleet(db.Systems, db.Tokens, db.Identities, db.Telemetry, service.Options{
+	fleet := service.NewFleet(db.Systems, db.Tokens, db.JoinTokens, db.Identities, db.Telemetry, service.Options{
 		HeartbeatInterval: time.Minute,
 	})
 	srv := httpapi.New(httpapi.Config{Fleet: fleet})
@@ -141,6 +141,65 @@ func TestFullEnrollmentFlowOverHTTP(t *testing.T) {
 	}
 	if got.AgentVersion != "1.2.3" {
 		t.Fatalf("agent version = %q", got.AgentVersion)
+	}
+}
+
+func TestJoinFlowOverHTTP(t *testing.T) {
+	ts := newTestServer(t)
+	tenant := map[string]string{"X-Tenant-ID": "acme"}
+
+	// Operator creates a reusable join key.
+	resp, data := doJSON(t, http.MethodPost, ts.URL+"/api/v1/join-tokens", map[string]any{
+		"name": "fleet", "region": "eu", "tags": []string{"iot"},
+	}, tenant)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create join token = %d: %s", resp.StatusCode, data)
+	}
+	var jt struct {
+		Token string `json:"token"`
+	}
+	mustJSON(t, data, &jt)
+	if jt.Token == "" {
+		t.Fatal("no join token returned")
+	}
+
+	// Device joins with facts (no prior registration).
+	resp, data = doJSON(t, http.MethodPost, ts.URL+"/agent/v1/join", map[string]any{
+		"join_token": jt.Token, "machine_id": "m-http-1", "hostname": "node-1",
+		"fqdn": "node1.acme.internal", "os": "linux", "arch": "arm64",
+	}, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("join = %d: %s", resp.StatusCode, data)
+	}
+	var enr struct {
+		SystemID string `json:"system_id"`
+		APIKey   string `json:"api_key"`
+	}
+	mustJSON(t, data, &enr)
+	if enr.APIKey == "" || enr.SystemID == "" {
+		t.Fatalf("join did not return credentials: %s", data)
+	}
+
+	// The auto-registered system carries the key's presets.
+	resp, data = doJSON(t, http.MethodGet, ts.URL+"/api/v1/systems/"+enr.SystemID, nil, tenant)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get system = %d: %s", resp.StatusCode, data)
+	}
+	var sys struct {
+		Region    string `json:"region"`
+		Lifecycle string `json:"lifecycle"`
+	}
+	mustJSON(t, data, &sys)
+	if sys.Region != "eu" || sys.Lifecycle != "enrolled" {
+		t.Fatalf("presets/lifecycle wrong: %s", data)
+	}
+
+	// A bogus join key is cleanly rejected with 401 (not 500).
+	resp, _ = doJSON(t, http.MethodPost, ts.URL+"/agent/v1/join", map[string]any{
+		"join_token": "not-a-real-key", "machine_id": "m-http-2",
+	}, nil)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("want 401 for bogus join key, got %d", resp.StatusCode)
 	}
 }
 

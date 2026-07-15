@@ -15,13 +15,21 @@ import "strings"
 //
 // serverURL and token are injected server-side. token may be empty, in which
 // case the script expects ARMADA_ENROLL_TOKEN in the environment.
-func renderInstallScript(serverURL, token string) string {
-	r := strings.NewReplacer("__SERVER__", shellQuote(serverURL), "__TOKEN__", shellQuote(token))
+func renderInstallScript(serverURL, token, join string) string {
+	r := strings.NewReplacer(
+		"__SERVER__", shellQuote(serverURL),
+		"__TOKEN__", shellQuote(token),
+		"__JOIN__", shellQuote(join),
+	)
 	return r.Replace(installShTemplate)
 }
 
-func renderInstallPowerShell(serverURL, token string) string {
-	r := strings.NewReplacer("__SERVER__", psQuote(serverURL), "__TOKEN__", psQuote(token))
+func renderInstallPowerShell(serverURL, token, join string) string {
+	r := strings.NewReplacer(
+		"__SERVER__", psQuote(serverURL),
+		"__TOKEN__", psQuote(token),
+		"__JOIN__", psQuote(join),
+	)
 	return r.Replace(installPs1Template)
 }
 
@@ -42,7 +50,9 @@ set -eu
 
 SERVER=__SERVER__
 TOKEN=__TOKEN__
+JOIN=__JOIN__
 [ -n "${TOKEN}" ] || TOKEN="${ARMADA_ENROLL_TOKEN:-}"
+[ -n "${JOIN}" ]  || JOIN="${ARMADA_JOIN_TOKEN:-}"
 
 BIN_NAME="management-agent"
 BIN_PATH="/usr/local/bin/${BIN_NAME}"
@@ -98,7 +108,9 @@ $SUDO install -m 0755 "$TMP" "$BIN_PATH"
 rm -f "$TMP"
 log "installed ${BIN_PATH}"
 
-[ -n "${TOKEN}" ] || die "no enrollment token; pass ?token=... or set ARMADA_ENROLL_TOKEN"
+if [ -z "${JOIN}" ] && [ -z "${TOKEN}" ]; then
+  die "no credential; pass ?join=KEY (reusable) or ?token=... (single-use)"
+fi
 
 # --- install a service under whatever init system exists ---
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
@@ -112,6 +124,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 Environment=ARMADA_SERVER_URL=${SERVER}
+Environment=ARMADA_JOIN_TOKEN=${JOIN}
 Environment=ARMADA_ENROLL_TOKEN=${TOKEN}
 Environment=ARMADA_AGENT_STATE=/var/lib/armada/agent.json
 ExecStartPre=/bin/mkdir -p /var/lib/armada
@@ -141,6 +154,7 @@ depend() { need net; }
 RC
   $SUDO sh -c "cat > /etc/conf.d/${BIN_NAME}" <<CONF
 export ARMADA_SERVER_URL=${SERVER}
+export ARMADA_JOIN_TOKEN=${JOIN}
 export ARMADA_ENROLL_TOKEN=${TOKEN}
 export ARMADA_AGENT_STATE=/var/lib/armada/agent.json
 CONF
@@ -153,7 +167,7 @@ CONF
 else
   log "no systemd/OpenRC found; starting in the background via nohup"
   $SUDO mkdir -p /var/lib/armada
-  ARMADA_SERVER_URL="${SERVER}" ARMADA_ENROLL_TOKEN="${TOKEN}" \
+  ARMADA_SERVER_URL="${SERVER}" ARMADA_JOIN_TOKEN="${JOIN}" ARMADA_ENROLL_TOKEN="${TOKEN}" \
     ARMADA_AGENT_STATE=/var/lib/armada/agent.json \
     $SUDO -E nohup "${BIN_PATH}" >/var/log/management-agent.log 2>&1 &
   log "started (see /var/log/management-agent.log)"
@@ -163,13 +177,17 @@ log "done — this device is now bound to the fleet."
 `
 
 const installPs1Template = `# Armada management-agent installer for Windows.
-# Usage: iwr -useb __SERVER__/manage/install.ps1?token=YOUR_TOKEN | iex
+# Usage: iwr -useb __SERVER__/manage/install.ps1?join=YOUR_JOIN_KEY | iex
 $ErrorActionPreference = 'Stop'
 
 $Server = __SERVER__
 $Token  = __TOKEN__
+$Join   = __JOIN__
 if ([string]::IsNullOrEmpty($Token)) { $Token = $env:ARMADA_ENROLL_TOKEN }
-if ([string]::IsNullOrEmpty($Token)) { throw 'no enrollment token; pass ?token=... or set ARMADA_ENROLL_TOKEN' }
+if ([string]::IsNullOrEmpty($Join))  { $Join  = $env:ARMADA_JOIN_TOKEN }
+if ([string]::IsNullOrEmpty($Join) -and [string]::IsNullOrEmpty($Token)) {
+  throw 'no credential; pass ?join=KEY (reusable) or ?token=... (single-use)'
+}
 
 switch ($env:PROCESSOR_ARCHITECTURE) {
   'AMD64' { $Arch = 'amd64' }
@@ -180,22 +198,29 @@ switch ($env:PROCESSOR_ARCHITECTURE) {
 
 $InstallDir = Join-Path $env:ProgramData 'Armada'
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-$BinPath = Join-Path $InstallDir 'management-agent.exe'
+$BinPath   = Join-Path $InstallDir 'management-agent.exe'
+$StatePath = Join-Path $InstallDir 'agent.json'
+$Wrapper   = Join-Path $InstallDir 'run.cmd'
 
 Write-Host "[armada] downloading windows/$Arch agent from $Server"
 Invoke-WebRequest -UseBasicParsing -Uri "$Server/manage/bin/windows/$Arch" -OutFile $BinPath
 
-# Register a startup Scheduled Task running as SYSTEM, and start it now.
-$action  = New-ScheduledTaskAction -Execute $BinPath
-$trigger = New-ScheduledTaskTrigger -AtStartup
+# A .cmd wrapper carries the config so the boot-time Scheduled Task has the
+# right environment (a Task started at startup would otherwise inherit none).
+@"
+@echo off
+set ARMADA_SERVER_URL=$Server
+set ARMADA_JOIN_TOKEN=$Join
+set ARMADA_ENROLL_TOKEN=$Token
+set ARMADA_AGENT_STATE=$StatePath
+"$BinPath"
+"@ | Set-Content -Path $Wrapper -Encoding ASCII
+
+# Register a startup Scheduled Task running the wrapper as SYSTEM, then start it.
+$action    = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c $Wrapper"
+$trigger   = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-$env:ARMADA_SERVER_URL   = $Server
-$env:ARMADA_ENROLL_TOKEN = $Token
-$env:ARMADA_AGENT_STATE  = (Join-Path $InstallDir 'agent.json')
-
 Register-ScheduledTask -TaskName 'ArmadaManagementAgent' -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
-
-# Launch immediately for this session (Task env is set above).
-Start-Process -FilePath $BinPath -WindowStyle Hidden
+Start-ScheduledTask -TaskName 'ArmadaManagementAgent'
 Write-Host '[armada] done — this device is now bound to the fleet.'
 `

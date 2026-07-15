@@ -15,6 +15,9 @@ type SystemStore interface {
 	Create(ctx context.Context, s *domain.System) error
 	Get(ctx context.Context, tenantID, id string) (*domain.System, error)
 	GetByFQDN(ctx context.Context, tenantID, fqdn string) (*domain.System, error)
+	// GetByMachineID resolves a system by its stable machine identifier, used to
+	// deduplicate zero-touch joins. Returns ErrNotFound if none matches.
+	GetByMachineID(ctx context.Context, tenantID, machineID string) (*domain.System, error)
 	List(ctx context.Context, tenantID string, f SystemFilter) ([]*domain.System, error)
 	Update(ctx context.Context, s *domain.System) error
 }
@@ -38,6 +41,15 @@ type TokenStore interface {
 	Create(ctx context.Context, t *domain.EnrollmentToken) error
 	GetByHash(ctx context.Context, hash string) (*domain.EnrollmentToken, error)
 	Update(ctx context.Context, t *domain.EnrollmentToken) error
+}
+
+// JoinTokenStore persists reusable join tokens.
+type JoinTokenStore interface {
+	Create(ctx context.Context, t *domain.JoinToken) error
+	GetByHash(ctx context.Context, hash string) (*domain.JoinToken, error)
+	GetByID(ctx context.Context, tenantID, id string) (*domain.JoinToken, error)
+	List(ctx context.Context, tenantID string) ([]*domain.JoinToken, error)
+	Update(ctx context.Context, t *domain.JoinToken) error
 }
 
 // IdentityStore persists per-system agent credentials.

@@ -41,6 +41,11 @@ type System struct {
 	Name string `json:"name"`
 	FQDN string `json:"fqdn"`
 
+	// MachineID is a stable, opaque per-host identifier used to deduplicate a
+	// device across re-installs, reboots, and IP changes. Empty for systems
+	// registered manually by an operator before any agent has joined.
+	MachineID string `json:"machine_id,omitempty"`
+
 	// Grouping dimensions.
 	Project     string            `json:"project,omitempty"`
 	Region      string            `json:"region,omitempty"`

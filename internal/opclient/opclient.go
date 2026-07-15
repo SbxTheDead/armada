@@ -157,6 +157,62 @@ func (c *Client) IssueEnrollToken(ctx context.Context, systemID string, ttl time
 	return &res, nil
 }
 
+// --- Join tokens ---
+
+// JoinTokenInput describes a reusable join key to create.
+type JoinTokenInput struct {
+	Name        string   `json:"name,omitempty"`
+	Project     string   `json:"project,omitempty"`
+	Region      string   `json:"region,omitempty"`
+	Environment string   `json:"environment,omitempty"`
+	Provider    string   `json:"provider,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	Approval    string   `json:"approval,omitempty"`
+	MaxUses     int      `json:"max_uses,omitempty"`
+	TTLSeconds  int      `json:"ttl_seconds,omitempty"`
+}
+
+// JoinTokenResult is the created key (plaintext shown once) plus its details.
+type JoinTokenResult struct {
+	ID      string            `json:"id"`
+	Token   string            `json:"token"`
+	Details *domain.JoinToken `json:"details"`
+}
+
+// CreateJoinToken mints a reusable join key.
+func (c *Client) CreateJoinToken(ctx context.Context, in JoinTokenInput) (*JoinTokenResult, error) {
+	var res JoinTokenResult
+	if err := c.do(ctx, http.MethodPost, "/api/v1/join-tokens", in, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+// ListJoinTokens returns the tenant's join keys.
+func (c *Client) ListJoinTokens(ctx context.Context) ([]domain.JoinToken, error) {
+	var resp struct {
+		JoinTokens []domain.JoinToken `json:"join_tokens"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/join-tokens", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.JoinTokens, nil
+}
+
+// RevokeJoinToken permanently disables a join key.
+func (c *Client) RevokeJoinToken(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/api/v1/join-tokens/"+url.PathEscape(id), nil, nil)
+}
+
+// ApproveSystem activates a device that joined under a manual-approval key.
+func (c *Client) ApproveSystem(ctx context.Context, id string) (*domain.System, error) {
+	var sys domain.System
+	if err := c.do(ctx, http.MethodPost, "/api/v1/systems/"+url.PathEscape(id)+"/approve", nil, &sys); err != nil {
+		return nil, err
+	}
+	return &sys, nil
+}
+
 // do performs a JSON request with operator auth and decodes the response.
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
 	var reader io.Reader

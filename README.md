@@ -109,26 +109,49 @@ ARMADA_ENROLL_TOKEN=<token> \
 The control plane hosts the agents and installs them for you — no manual
 copying or per-architecture fiddling.
 
+### Zero-touch: one reusable join key for the whole fleet (recommended)
+
+Generate a key once. It never expires and binds any number of devices, so you
+can bake it into a cloud-init snippet, a Dockerfile, an IoT image, or an Ansible
+role and every machine self-registers on first boot.
+
 ```bash
-# On the operator side, get the one-liner for a registered system:
-armada install-command <system-id>
+# once, on the operator side:
+armada join-token create --name fleet --region eu-west --tag iot
 ```
 
-That prints a ready-to-paste command. On the device, run it:
+That prints a reusable command. Run it on any device or VM:
 
 ```bash
-# Linux / macOS / BSD — auto-detects OS + CPU arch, installs, enrolls:
-curl -fsSL 'http://<vps>:8080/manage?token=<token>' | sh
+# Linux / macOS / BSD:
+wget -qO- 'http://<vps>:8080/manage?join=<key>' | sh
 
 # Windows (PowerShell, as Administrator):
-iwr -useb 'http://<vps>:8080/manage/install.ps1?token=<token>' | iex
+iwr -useb 'http://<vps>:8080/manage/install.ps1?join=<key>' | iex
 ```
 
 The installer detects the host (`uname -s` / `uname -m`, or
-`$PROCESSOR_ARCHITECTURE` on Windows), downloads the matching agent from the
-server, installs it as a service (**systemd**, **OpenRC**, or a `nohup`
-fallback on Linux; a **Scheduled Task** on Windows), and enrolls it. The device
-then shows up in `armada monitor`.
+`$PROCESSOR_ARCHITECTURE` on Windows), downloads the matching agent, installs it
+as a service (**systemd**, **OpenRC**, or a `nohup` fallback on Linux; a
+**Scheduled Task** on Windows), and **auto-registers** the device — no prior
+`systems register`. It picks up the key's group presets (project/region/tags),
+and appears in `armada monitor`.
+
+Devices are deduplicated by a stable machine id (`/etc/machine-id`,
+Windows `MachineGuid`), so re-installs, reboots, and IP changes never create a
+duplicate. Set `ARMADA_MACHINE_ID` to override it on cloned images/containers.
+
+Manage keys with `armada join-token list` and `armada join-token revoke <id>`.
+Options: `--approval manual` (device lands `pending` until `armada systems
+approve <id>`), `--max-uses N`, and `--ttl` if you *do* want it to expire.
+
+### Single-device: one-time token
+
+For tight, per-machine control (register first, then bind exactly one device):
+
+```bash
+armada install-command <system-id>   # prints a curl|sh with a single-use ?token=
+```
 
 The running agent presents itself to process viewers as **`MANAGEMENT AGENT`**
 — that's the name you'll see in `htop`, `ps`, and `top` on Linux.
@@ -157,8 +180,12 @@ armada systems register --name N --fqdn F [--project --region --environment --pr
 armada systems list     [--region --health --lifecycle --project --provider --tag --limit] [--json]
 armada systems get      <id> [--json]
 armada systems inventory <id>
+armada systems approve  <id>                         # activate a manual-approval join
+armada join-token create [--name --project --region --environment --provider --tag --approval auto|manual --max-uses N --ttl D]
+armada join-token list   [--json]
+armada join-token revoke <id>
 armada enroll           <system-id> [--ttl 15m]
-armada install-command  <system-id> [--ttl 30m]     # one-liner to bind a device
+armada install-command  <system-id> [--ttl 30m]     # single-device one-liner
 armada monitor          [--interval 5s] [--once] [--region --health ...]
 armada version
 ```

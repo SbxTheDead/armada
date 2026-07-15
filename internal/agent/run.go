@@ -77,19 +77,47 @@ func ensureEnrolled(ctx context.Context, cfg config.Agent, client *Client, log *
 	if st, ok := loadState(cfg.StatePath); ok {
 		return st, nil
 	}
-	// 2. Enroll with the one-time token.
-	if cfg.EnrollToken == "" {
-		return state{}, fmt.Errorf("agent has no API key and no enrollment token; set ARMADA_ENROLL_TOKEN")
-	}
+
 	fqdn := cfg.FQDN
 	if fqdn == "" {
 		fqdn, _ = os.Hostname()
 	}
-	log.Info("enrolling with control plane", "fqdn", fqdn)
-	systemID, apiKey, err := client.Enroll(ctx, cfg.EnrollToken, fqdn)
-	if err != nil {
-		return state{}, fmt.Errorf("enrollment failed: %w", err)
+
+	var (
+		systemID, apiKey string
+		err              error
+	)
+	switch {
+	// 2. Zero-touch: reusable join key self-registers this device.
+	case cfg.JoinToken != "":
+		hostname, _ := os.Hostname()
+		mid := cfg.MachineID
+		if mid == "" {
+			mid = machineID()
+		}
+		facts := domain.DeviceFacts{
+			MachineID: mid,
+			Hostname:  hostname,
+			FQDN:      fqdn,
+			OS:        runtime.GOOS,
+			Arch:      runtime.GOARCH,
+		}
+		log.Info("joining fleet with join key", "fqdn", fqdn, "machine_id", shortID(facts.MachineID))
+		systemID, apiKey, err = client.Join(ctx, cfg.JoinToken, facts)
+		if err != nil {
+			return state{}, fmt.Errorf("join failed: %w", err)
+		}
+	// 3. Single-use enrollment token against a pre-registered system.
+	case cfg.EnrollToken != "":
+		log.Info("enrolling with control plane", "fqdn", fqdn)
+		systemID, apiKey, err = client.Enroll(ctx, cfg.EnrollToken, fqdn)
+		if err != nil {
+			return state{}, fmt.Errorf("enrollment failed: %w", err)
+		}
+	default:
+		return state{}, fmt.Errorf("agent has no API key, join key, or enrollment token; set ARMADA_JOIN_TOKEN")
 	}
+
 	st := state{SystemID: systemID, APIKey: apiKey}
 	if err := saveState(cfg.StatePath, st); err != nil {
 		log.Warn("could not persist agent state; will re-enroll on restart", "err", err)
@@ -128,6 +156,15 @@ func collectMetrics() domain.Metrics {
 }
 
 var processStart = time.Now()
+
+// shortID truncates an identifier for log readability without panicking on
+// short values (e.g. an operator-supplied ARMADA_MACHINE_ID).
+func shortID(id string) string {
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:12]
+}
 
 // --- state persistence ---
 

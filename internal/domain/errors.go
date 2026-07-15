@@ -21,6 +21,10 @@ var (
 	// expired, revoked, or already consumed.
 	ErrEnrollmentToken = errors.New("invalid enrollment token")
 
+	// ErrJoinToken is returned when a reusable join token is unknown, expired,
+	// revoked, or has exhausted its use cap.
+	ErrJoinToken = errors.New("invalid join token")
+
 	// ErrUnauthorized is returned when an agent presents credentials that do
 	// not match a known, active system identity.
 	ErrUnauthorized = errors.New("unauthorized")

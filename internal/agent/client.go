@@ -54,6 +54,26 @@ func (c *Client) Enroll(ctx context.Context, token, fqdn string) (systemID, apiK
 	return resp.SystemID, resp.APIKey, nil
 }
 
+// Join redeems a reusable join token, self-registering the device from its
+// reported facts. Returns the issued system ID and bearer API key.
+func (c *Client) Join(ctx context.Context, joinToken string, facts domain.DeviceFacts) (systemID, apiKey string, err error) {
+	if facts.AgentVersion == "" {
+		facts.AgentVersion = c.version
+	}
+	body := struct {
+		JoinToken string `json:"join_token"`
+		domain.DeviceFacts
+	}{JoinToken: joinToken, DeviceFacts: facts}
+	var resp struct {
+		SystemID string `json:"system_id"`
+		APIKey   string `json:"api_key"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/agent/v1/join", body, false, &resp); err != nil {
+		return "", "", err
+	}
+	return resp.SystemID, resp.APIKey, nil
+}
+
 // SendHeartbeat posts a liveness beacon with current metrics.
 func (c *Client) SendHeartbeat(ctx context.Context, hb domain.Heartbeat) error {
 	hb.AgentVersion = c.version

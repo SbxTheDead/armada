@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
@@ -27,6 +28,7 @@ type IDGen func() string
 type Fleet struct {
 	systems    store.SystemStore
 	tokens     store.TokenStore
+	joinTokens store.JoinTokenStore
 	identities store.IdentityStore
 	telemetry  store.TelemetryStore
 
@@ -46,10 +48,11 @@ type Options struct {
 }
 
 // NewFleet wires the service to its persistence ports.
-func NewFleet(systems store.SystemStore, tokens store.TokenStore, identities store.IdentityStore, telemetry store.TelemetryStore, opts Options) *Fleet {
+func NewFleet(systems store.SystemStore, tokens store.TokenStore, joinTokens store.JoinTokenStore, identities store.IdentityStore, telemetry store.TelemetryStore, opts Options) *Fleet {
 	f := &Fleet{
 		systems:           systems,
 		tokens:            tokens,
+		joinTokens:        joinTokens,
 		identities:        identities,
 		telemetry:         telemetry,
 		now:               opts.Now,
@@ -222,6 +225,225 @@ func (f *Fleet) Enroll(ctx context.Context, tokenPlaintext, fqdn string) (*Enrol
 		return nil, err
 	}
 	return &EnrollResult{System: sys, APIKey: apiKey}, nil
+}
+
+// --- Reusable join tokens (zero-touch onboarding) ---
+
+// NewJoinTokenInput describes a reusable join key. Zero MaxUses means unlimited;
+// zero TTL means the key never expires — the "generate once, works forever"
+// default.
+type NewJoinTokenInput struct {
+	TenantID    string
+	Name        string
+	Project     string
+	Region      string
+	Environment string
+	Provider    string
+	Tags        []string
+	Approval    domain.ApprovalPolicy
+	MaxUses     int
+	TTL         time.Duration
+}
+
+// CreateJoinToken mints a reusable join key, returning the plaintext once.
+func (f *Fleet) CreateJoinToken(ctx context.Context, in NewJoinTokenInput) (plaintext string, tok *domain.JoinToken, err error) {
+	if in.TenantID == "" {
+		return "", nil, fmt.Errorf("%w: tenant_id is required", domain.ErrValidation)
+	}
+	approval := in.Approval
+	if approval == "" {
+		approval = domain.ApprovalAuto
+	}
+	if approval != domain.ApprovalAuto && approval != domain.ApprovalManual {
+		return "", nil, fmt.Errorf("%w: approval must be 'auto' or 'manual'", domain.ErrValidation)
+	}
+	secret, err := randomSecret(32)
+	if err != nil {
+		return "", nil, err
+	}
+	now := f.now().UTC()
+	tok = &domain.JoinToken{
+		ID:          f.id(),
+		TenantID:    in.TenantID,
+		Name:        in.Name,
+		Hash:        hashSecret(secret),
+		Project:     in.Project,
+		Region:      in.Region,
+		Environment: in.Environment,
+		Provider:    in.Provider,
+		Tags:        in.Tags,
+		Approval:    approval,
+		MaxUses:     in.MaxUses,
+		CreatedAt:   now,
+	}
+	if in.TTL > 0 {
+		exp := now.Add(in.TTL)
+		tok.ExpiresAt = &exp
+	}
+	if err := f.joinTokens.Create(ctx, tok); err != nil {
+		return "", nil, err
+	}
+	return secret, tok, nil
+}
+
+// ListJoinTokens returns a tenant's join keys (without plaintext).
+func (f *Fleet) ListJoinTokens(ctx context.Context, tenantID string) ([]*domain.JoinToken, error) {
+	return f.joinTokens.List(ctx, tenantID)
+}
+
+// RevokeJoinToken permanently disables a join key.
+func (f *Fleet) RevokeJoinToken(ctx context.Context, tenantID, id string) error {
+	tok, err := f.joinTokens.GetByID(ctx, tenantID, id)
+	if err != nil {
+		return err
+	}
+	if tok.RevokedAt != nil {
+		return nil // already revoked; idempotent
+	}
+	now := f.now().UTC()
+	tok.RevokedAt = &now
+	return f.joinTokens.Update(ctx, tok)
+}
+
+// JoinWithToken is the zero-touch onboarding path: an agent presents a reusable
+// join key plus its self-reported facts, and the system is found-or-created,
+// grouped per the key's presets, and issued a bearer API key. It is idempotent
+// on MachineID, so re-running the installer on the same host re-attaches to the
+// existing System rather than duplicating it.
+func (f *Fleet) JoinWithToken(ctx context.Context, joinKey string, facts domain.DeviceFacts) (*EnrollResult, error) {
+	if joinKey == "" {
+		return nil, domain.ErrJoinToken
+	}
+	tok, err := f.joinTokens.GetByHash(ctx, hashSecret(joinKey))
+	if err != nil {
+		return nil, domain.ErrJoinToken
+	}
+	now := f.now().UTC()
+	if !tok.Active(now) {
+		return nil, domain.ErrJoinToken
+	}
+
+	// Find an existing system for this machine (dedupe), else create one.
+	sys, err := f.findDeviceSystem(ctx, tok.TenantID, facts)
+	switch {
+	case err == nil:
+		if sys.Lifecycle == domain.LifecycleRetired || sys.Lifecycle == domain.LifecycleQuarantine {
+			return nil, fmt.Errorf("%w: system is %s", domain.ErrValidation, sys.Lifecycle)
+		}
+		f.applyFacts(sys, facts, now)
+		if err := f.systems.Update(ctx, sys); err != nil {
+			return nil, err
+		}
+	case errors.Is(err, domain.ErrNotFound):
+		sys = f.newDeviceSystem(tok, facts, now)
+		if err := f.systems.Create(ctx, sys); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, err
+	}
+
+	// Issue (or rotate) the agent credential.
+	apiKey, err := randomSecret(32)
+	if err != nil {
+		return nil, err
+	}
+	if err := f.identities.Create(ctx, &domain.AgentIdentity{
+		SystemID:   sys.ID,
+		TenantID:   sys.TenantID,
+		APIKeyHash: hashSecret(apiKey),
+		CreatedAt:  now,
+	}); err != nil {
+		return nil, err
+	}
+
+	// Count the use.
+	tok.Uses++
+	if err := f.joinTokens.Update(ctx, tok); err != nil {
+		return nil, err
+	}
+	return &EnrollResult{System: sys, APIKey: apiKey}, nil
+}
+
+// findDeviceSystem resolves a joining device to an existing system, preferring
+// the stable machine id and falling back to FQDN.
+func (f *Fleet) findDeviceSystem(ctx context.Context, tenantID string, facts domain.DeviceFacts) (*domain.System, error) {
+	if facts.MachineID != "" {
+		if sys, err := f.systems.GetByMachineID(ctx, tenantID, facts.MachineID); err == nil {
+			return sys, nil
+		}
+	}
+	if facts.FQDN != "" {
+		return f.systems.GetByFQDN(ctx, tenantID, facts.FQDN)
+	}
+	return nil, domain.ErrNotFound
+}
+
+// newDeviceSystem builds a System from a join token's presets and the device's
+// facts. Auto-approval activates it immediately; manual leaves it pending.
+func (f *Fleet) newDeviceSystem(tok *domain.JoinToken, facts domain.DeviceFacts, now time.Time) *domain.System {
+	lifecycle := domain.LifecycleEnrolled
+	if tok.Approval == domain.ApprovalManual {
+		lifecycle = domain.LifecyclePending
+	}
+	name := facts.Hostname
+	if name == "" {
+		name = facts.FQDN
+	}
+	sys := &domain.System{
+		ID:          f.id(),
+		TenantID:    tok.TenantID,
+		Name:        name,
+		FQDN:        facts.FQDN,
+		MachineID:   facts.MachineID,
+		Project:     tok.Project,
+		Region:      tok.Region,
+		Environment: tok.Environment,
+		Provider:    tok.Provider,
+		Tags:        tok.Tags,
+		Lifecycle:   lifecycle,
+		Health:      domain.HealthUnknown,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	f.applyFacts(sys, facts, now)
+	return sys
+}
+
+// applyFacts refreshes the reported fields on a system from a device report.
+func (f *Fleet) applyFacts(sys *domain.System, facts domain.DeviceFacts, now time.Time) {
+	if facts.MachineID != "" {
+		sys.MachineID = facts.MachineID
+	}
+	if facts.FQDN != "" {
+		sys.FQDN = facts.FQDN
+	}
+	if facts.Arch != "" {
+		sys.Arch = facts.Arch
+	}
+	if facts.OS != "" {
+		sys.OS = facts.OS
+	}
+	if facts.AgentVersion != "" {
+		sys.AgentVersion = facts.AgentVersion
+	}
+	sys.UpdatedAt = now
+}
+
+// ApproveSystem activates a device that joined under a manual-approval key.
+func (f *Fleet) ApproveSystem(ctx context.Context, tenantID, id string) (*domain.System, error) {
+	sys, err := f.systems.Get(ctx, tenantID, id)
+	if err != nil {
+		return nil, err
+	}
+	if sys.Lifecycle == domain.LifecyclePending {
+		sys.Lifecycle = domain.LifecycleEnrolled
+		sys.UpdatedAt = f.now().UTC()
+		if err := f.systems.Update(ctx, sys); err != nil {
+			return nil, err
+		}
+	}
+	return sys, nil
 }
 
 // AuthenticateAgent resolves an agent identity from a presented bearer key,

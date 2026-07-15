@@ -44,6 +44,8 @@ func main() {
 		err = runSystems(ctx, os.Args[2:])
 	case "enroll":
 		err = runEnroll(ctx, os.Args[2:])
+	case "join-token":
+		err = runJoinToken(ctx, os.Args[2:])
 	case "install-command":
 		err = runInstallCommand(ctx, os.Args[2:])
 	case "monitor":
@@ -72,8 +74,12 @@ Commands:
   systems list       List devices (with filters)
   systems get        Show one device in detail
   systems inventory  Show a device's latest hardware/OS inventory
-  enroll             Issue a one-time enrollment token for a device's agent
-  install-command    Print the one-line curl|sh (and PowerShell) to bind a device
+  systems approve    Activate a device that joined under a manual-approval key
+  join-token create  Create a reusable join key (zero-touch: one key binds many devices)
+  join-token list    List join keys
+  join-token revoke  Revoke a join key
+  enroll             Issue a one-time enrollment token for a single device
+  install-command    Print the one-line curl|sh (and PowerShell) to bind one device
   monitor            Live health + metrics view of the fleet
   version            Print the CLI version
 

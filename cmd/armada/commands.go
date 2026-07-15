@@ -23,6 +23,8 @@ func runSystems(ctx context.Context, args []string) error {
 		return runSystemsGet(ctx, args[1:])
 	case "inventory":
 		return runSystemsInventory(ctx, args[1:])
+	case "approve":
+		return runSystemsApprove(ctx, args[1:])
 	default:
 		return fmt.Errorf("unknown systems subcommand %q", args[0])
 	}

@@ -24,6 +24,7 @@ type core struct {
 	mu         sync.RWMutex
 	systems    map[string]*domain.System          // key: tenantID/id
 	tokens     map[string]*domain.EnrollmentToken // key: hash
+	joinTokens map[string]*domain.JoinToken       // key: hash
 	identities map[string]*domain.AgentIdentity   // key: tenantID/systemID
 	byAPIKey   map[string]string                  // apiKeyHash -> tenantID/systemID
 	heartbeats map[string]*domain.Heartbeat       // key: systemID (latest only)
@@ -35,6 +36,7 @@ type core struct {
 type DB struct {
 	Systems    *SystemStore
 	Tokens     *TokenStore
+	JoinTokens *JoinTokenStore
 	Identities *IdentityStore
 	Telemetry  *TelemetryStore
 }
@@ -44,6 +46,7 @@ func New() *DB {
 	c := &core{
 		systems:    make(map[string]*domain.System),
 		tokens:     make(map[string]*domain.EnrollmentToken),
+		joinTokens: make(map[string]*domain.JoinToken),
 		identities: make(map[string]*domain.AgentIdentity),
 		byAPIKey:   make(map[string]string),
 		heartbeats: make(map[string]*domain.Heartbeat),
@@ -52,6 +55,7 @@ func New() *DB {
 	return &DB{
 		Systems:    &SystemStore{c},
 		Tokens:     &TokenStore{c},
+		JoinTokens: &JoinTokenStore{c},
 		Identities: &IdentityStore{c},
 		Telemetry:  &TelemetryStore{c},
 	}
@@ -94,6 +98,21 @@ func (s *SystemStore) GetByFQDN(ctx context.Context, tenantID, fqdn string) (*do
 	defer s.c.mu.RUnlock()
 	for _, sys := range s.c.systems {
 		if sys.TenantID == tenantID && strings.EqualFold(sys.FQDN, fqdn) {
+			cp := *sys
+			return &cp, nil
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (s *SystemStore) GetByMachineID(ctx context.Context, tenantID, machineID string) (*domain.System, error) {
+	if machineID == "" {
+		return nil, domain.ErrNotFound
+	}
+	s.c.mu.RLock()
+	defer s.c.mu.RUnlock()
+	for _, sys := range s.c.systems {
+		if sys.TenantID == tenantID && sys.MachineID == machineID {
 			cp := *sys
 			return &cp, nil
 		}
@@ -215,6 +234,68 @@ func (s *TokenStore) Update(ctx context.Context, t *domain.EnrollmentToken) erro
 	}
 	cp := *t
 	s.c.tokens[t.Hash] = &cp
+	return nil
+}
+
+// --- JoinTokenStore ---
+
+type JoinTokenStore struct{ c *core }
+
+var _ store.JoinTokenStore = (*JoinTokenStore)(nil)
+
+func (s *JoinTokenStore) Create(ctx context.Context, t *domain.JoinToken) error {
+	s.c.mu.Lock()
+	defer s.c.mu.Unlock()
+	cp := *t
+	s.c.joinTokens[t.Hash] = &cp
+	return nil
+}
+
+func (s *JoinTokenStore) GetByHash(ctx context.Context, hash string) (*domain.JoinToken, error) {
+	s.c.mu.RLock()
+	defer s.c.mu.RUnlock()
+	t, ok := s.c.joinTokens[hash]
+	if !ok {
+		return nil, domain.ErrJoinToken
+	}
+	cp := *t
+	return &cp, nil
+}
+
+func (s *JoinTokenStore) GetByID(ctx context.Context, tenantID, id string) (*domain.JoinToken, error) {
+	s.c.mu.RLock()
+	defer s.c.mu.RUnlock()
+	for _, t := range s.c.joinTokens {
+		if t.TenantID == tenantID && t.ID == id {
+			cp := *t
+			return &cp, nil
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (s *JoinTokenStore) List(ctx context.Context, tenantID string) ([]*domain.JoinToken, error) {
+	s.c.mu.RLock()
+	defer s.c.mu.RUnlock()
+	var out []*domain.JoinToken
+	for _, t := range s.c.joinTokens {
+		if t.TenantID == tenantID {
+			cp := *t
+			out = append(out, &cp)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (s *JoinTokenStore) Update(ctx context.Context, t *domain.JoinToken) error {
+	s.c.mu.Lock()
+	defer s.c.mu.Unlock()
+	if _, ok := s.c.joinTokens[t.Hash]; !ok {
+		return domain.ErrNotFound
+	}
+	cp := *t
+	s.c.joinTokens[t.Hash] = &cp
 	return nil
 }
 

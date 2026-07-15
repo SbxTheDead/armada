@@ -70,12 +70,19 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/systems/{id}/inventory", op(http.HandlerFunc(s.handleGetInventory)))
 	mux.Handle("GET /api/v1/systems/{id}/metrics", op(http.HandlerFunc(s.handleGetMetrics)))
 	mux.Handle("POST /api/v1/systems/{id}/enroll-token", op(http.HandlerFunc(s.handleIssueToken)))
+	mux.Handle("POST /api/v1/systems/{id}/approve", op(http.HandlerFunc(s.handleApproveSystem)))
+
+	// Operator: reusable join tokens (zero-touch onboarding).
+	mux.Handle("POST /api/v1/join-tokens", op(http.HandlerFunc(s.handleCreateJoinToken)))
+	mux.Handle("GET /api/v1/join-tokens", op(http.HandlerFunc(s.handleListJoinTokens)))
+	mux.Handle("DELETE /api/v1/join-tokens/{id}", op(http.HandlerFunc(s.handleRevokeJoinToken)))
 
 	// Self-hosting agent distribution: /manage installer + binary downloads.
 	s.registerManageRoutes(mux)
 
 	// Agent enrollment — token authenticates in the body, no bearer yet.
 	mux.HandleFunc("POST /agent/v1/enroll", s.handleEnroll)
+	mux.HandleFunc("POST /agent/v1/join", s.handleJoin)
 
 	// Agent API — requires a valid agent bearer key.
 	ag := s.requireAgent
@@ -118,6 +125,8 @@ func writeDomainError(w http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrValidation):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, domain.ErrEnrollmentToken):
+		writeError(w, http.StatusUnauthorized, err.Error())
+	case errors.Is(err, domain.ErrJoinToken):
 		writeError(w, http.StatusUnauthorized, err.Error())
 	case errors.Is(err, domain.ErrUnauthorized):
 		writeError(w, http.StatusUnauthorized, err.Error())
