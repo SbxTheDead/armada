@@ -179,9 +179,10 @@ func (c *Client) ApproveSystem(ctx context.Context, id string) (*domain.System, 
 
 // ModuleInfo describes a published module.
 type ModuleInfo struct {
-	Name   string `json:"name"`
-	Size   int64  `json:"size"`
-	SHA256 string `json:"sha256"`
+	Name    string `json:"name"`
+	Runtime string `json:"runtime"`
+	Size    int64  `json:"size"`
+	SHA256  string `json:"sha256"`
 }
 
 // ListModules returns the modules the control plane can dispatch.

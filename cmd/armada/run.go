@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -14,6 +15,13 @@ import (
 
 // runRun dispatches a module to matching devices: `armada run <module> [filters]`.
 func runRun(ctx context.Context, args []string) error {
+	// The module name is the first token; flags follow it. (Go's flag package
+	// stops at the first positional, so we split the module off before parsing.)
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return fmt.Errorf("usage: armada run <module> [--all|--region|--tag ...] [--arg ...]")
+	}
+	module := args[0]
+
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	resolve := registerGlobals(fs)
 	filter := opclient.ListFilter{}
@@ -26,12 +34,8 @@ func runRun(ctx context.Context, args []string) error {
 	var modArgs stringSlice
 	fs.Var(&modArgs, "arg", "argument passed to the module (repeatable)")
 	wait := fs.Bool("wait", true, "wait for results and print them")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(args[1:]); err != nil {
 		return err
-	}
-	module := fs.Arg(0)
-	if module == "" {
-		return fmt.Errorf("usage: armada run <module> [--all|--region|--tag ...] [--arg ...]")
 	}
 	cfg, err := resolve()
 	if err != nil {
@@ -218,9 +222,9 @@ func runModules(ctx context.Context, args []string) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "MODULE\tSIZE\tSHA256")
+	fmt.Fprintln(tw, "MODULE\tRUNTIME\tSIZE\tSHA256")
 	for _, m := range mods {
-		fmt.Fprintf(tw, "%s\t%d\t%s\n", m.Name, m.Size, short(m.SHA256))
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", m.Name, m.Runtime, m.Size, short(m.SHA256))
 	}
 	_ = tw.Flush()
 	return nil

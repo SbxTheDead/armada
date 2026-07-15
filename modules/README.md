@@ -1,11 +1,22 @@
 # Armada modules
 
-A **module** is a small program compiled to a single WebAssembly file that the
-agent runs, sandboxed, on a device. Because it's WASM, one `.wasm` runs on every
-CPU architecture and OS the fleet has — you compile once, it runs everywhere.
+A **module** is a small program the agent runs on a device to do work. Two
+runtimes are supported, chosen automatically by the file extension:
 
-Modules are written in **C** (this SDK), but any language that compiles to
-`wasm32-wasi` and can call the host ABI works (Rust, TinyGo, Zig).
+| File        | Runtime | Runs how                                             |
+| ----------- | ------- | ---------------------------------------------------- |
+| `<name>.wasm` | WASM  | sandboxed, in-agent via wazero — one file, all arches |
+| `<name>.py`   | Python | on the device's Python interpreter (no sandbox)      |
+
+`armada run <name>` picks the runtime from whichever file is published; you
+don't specify it. `armada modules` shows each module's runtime.
+
+## WASM modules (C)
+
+Written in **C** (this SDK) — or any language that compiles to `wasm32-wasi`
+and can call the host ABI (Rust, TinyGo, Zig). Because it's WASM, one `.wasm`
+runs on every CPU architecture and OS the fleet has — compile once, run
+everywhere.
 
 ## Layout
 
@@ -49,12 +60,34 @@ Or with the SDK's bundled clang:
 /opt/wasi-sdk/bin/clang -O2 -o dist/ftp.wasm src/install_ftp.c
 ```
 
+## Python modules
+
+A Python module is just a script — no compilation. It runs with the device's
+Python interpreter (`python3`, or `py` on Windows; override with
+`ARMADA_PYTHON`), with full access. Its exit code is the task result and its
+output is captured. Arguments are passed as `sys.argv[1:]`.
+
+```python
+# modules/py/hello.py
+import subprocess, sys
+def main() -> int:
+    subprocess.run(["apt-get", "install", "-y", "vsftpd"])  # or anything
+    return 0
+sys.exit(main())
+```
+
+Devices without Python fail the task with a clear "no Python interpreter found"
+message (a future `python.wasm` runtime can remove that requirement). WASM
+modules have no such dependency — prefer them for universal reach.
+
 ## Publishing & running
 
-1. Drop the `.wasm` into the server's module dir (`modules/dist/` by default).
-2. `armada modules` lists what's available.
+1. Drop the artifact into the server's module dir (`modules/dist/` by default):
+   a compiled `<name>.wasm`, or a `<name>.py` script.
+2. `armada modules` lists what's available and each one's runtime.
 3. `armada run ftp --all` (or `--region eu`, `--tag db`, …) dispatches it; each
-   agent downloads the module, runs it, and returns the exit code + output.
+   agent downloads the module, runs it with the matching runtime, and returns
+   the exit code + output.
 4. `armada jobs get <id>` shows per-device results.
 
 ## Writing your own

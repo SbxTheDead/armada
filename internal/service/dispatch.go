@@ -10,9 +10,10 @@ import (
 )
 
 // RunModule creates a job that runs a module on every system matching the
-// filter, fanning out one task per device. It returns the job and the number of
-// devices targeted. The module itself is fetched and executed by each agent.
-func (f *Fleet) RunModule(ctx context.Context, tenantID, module string, args []string, filter store.SystemFilter) (*domain.Job, error) {
+// filter, fanning out one task per device. runtime tells each agent how to
+// execute the module (wasm or python). It returns the job and the number of
+// devices targeted.
+func (f *Fleet) RunModule(ctx context.Context, tenantID, module string, runtime domain.Runtime, args []string, filter store.SystemFilter) (*domain.Job, error) {
 	if strings.TrimSpace(module) == "" {
 		return nil, fmt.Errorf("%w: module is required", domain.ErrValidation)
 	}
@@ -36,6 +37,7 @@ func (f *Fleet) RunModule(ctx context.Context, tenantID, module string, args []s
 		ID:        f.id(),
 		TenantID:  tenantID,
 		Module:    module,
+		Runtime:   runtime,
 		Args:      args,
 		Selector:  describeFilter(filter, len(targets)),
 		Total:     len(targets),
@@ -51,6 +53,7 @@ func (f *Fleet) RunModule(ctx context.Context, tenantID, module string, args []s
 			TenantID:  tenantID,
 			SystemID:  s.ID,
 			Module:    module,
+			Runtime:   runtime,
 			Args:      args,
 			Status:    domain.TaskPending,
 			CreatedAt: now,

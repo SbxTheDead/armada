@@ -50,6 +50,7 @@ type Agent struct {
 	APIKey            string // populated after enrollment
 	StatePath         string // where the agent persists its identity
 	ModuleCacheDir    string // where the agent caches downloaded WASM modules
+	PythonInterpreter string // override Python interpreter for .py modules
 	HeartbeatInterval time.Duration
 	InventoryInterval time.Duration
 	TaskPollInterval  time.Duration
@@ -65,6 +66,7 @@ func LoadAgent() Agent {
 		APIKey:            os.Getenv("ARMADA_API_KEY"),
 		StatePath:         env("ARMADA_AGENT_STATE", "armada-agent.json"),
 		ModuleCacheDir:    env("ARMADA_MODULE_CACHE", "armada-modules"),
+		PythonInterpreter: os.Getenv("ARMADA_PYTHON"),
 		HeartbeatInterval: envDuration("ARMADA_HEARTBEAT_INTERVAL", 60*time.Second),
 		InventoryInterval: envDuration("ARMADA_INVENTORY_INTERVAL", 30*time.Minute),
 		TaskPollInterval:  envDuration("ARMADA_TASK_POLL_INTERVAL", 10*time.Second),

@@ -10,15 +10,23 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/SbxTheDead/armada/internal/domain"
 	"github.com/SbxTheDead/armada/internal/store"
 )
 
 // --- Operator: module catalog ---
 
+// moduleExt maps a served file extension to the runtime that executes it.
+var moduleExt = map[string]domain.Runtime{
+	".wasm": domain.RuntimeWASM,
+	".py":   domain.RuntimePython,
+}
+
 type moduleInfo struct {
-	Name   string `json:"name"`
-	Size   int64  `json:"size"`
-	SHA256 string `json:"sha256"`
+	Name    string         `json:"name"`
+	Runtime domain.Runtime `json:"runtime"`
+	Size    int64          `json:"size"`
+	SHA256  string         `json:"sha256"`
 }
 
 func (s *Server) handleListModules(w http.ResponseWriter, r *http.Request) {
@@ -30,18 +38,38 @@ func (s *Server) handleListModules(w http.ResponseWriter, r *http.Request) {
 	}
 	var mods []moduleInfo
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".wasm") {
+		if e.IsDir() {
 			continue
 		}
-		name := strings.TrimSuffix(e.Name(), ".wasm")
+		rt, ok := moduleExt[strings.ToLower(filepath.Ext(e.Name()))]
+		if !ok {
+			continue
+		}
 		info, err := e.Info()
 		if err != nil {
 			continue
 		}
-		mods = append(mods, moduleInfo{Name: name, Size: info.Size(), SHA256: fileSHA256(filepath.Join(s.moduleDir, e.Name()))})
+		mods = append(mods, moduleInfo{
+			Name:    strings.TrimSuffix(e.Name(), filepath.Ext(e.Name())),
+			Runtime: rt,
+			Size:    info.Size(),
+			SHA256:  fileSHA256(filepath.Join(s.moduleDir, e.Name())),
+		})
 	}
 	sort.Slice(mods, func(i, j int) bool { return mods[i].Name < mods[j].Name })
 	writeJSON(w, http.StatusOK, map[string]any{"modules": mods, "count": len(mods)})
+}
+
+// resolveModule finds a published module by name, returning its filename and
+// runtime. It prefers .wasm over .py if both exist.
+func (s *Server) resolveModule(name string) (filename string, runtime domain.Runtime, err error) {
+	for _, ext := range []string{".wasm", ".py"} {
+		fn := name + ext
+		if _, err := os.Stat(filepath.Join(s.moduleDir, fn)); err == nil {
+			return fn, moduleExt[ext], nil
+		}
+	}
+	return "", "", os.ErrNotExist
 }
 
 // --- Operator: jobs ---
@@ -62,6 +90,12 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+	// Resolve the module to its runtime (and confirm it exists) before dispatch.
+	_, runtime, err := s.resolveModule(req.Module)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown module %q; run 'armada modules' to list published modules", req.Module))
+		return
+	}
 	filter := store.SystemFilter{
 		Project:     req.Project,
 		Region:      req.Region,
@@ -69,7 +103,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		Provider:    req.Provider,
 		Tag:         req.Tag,
 	}
-	job, err := s.fleet.RunModule(r.Context(), tenantFrom(r.Context()), req.Module, req.Args, filter)
+	job, err := s.fleet.RunModule(r.Context(), tenantFrom(r.Context()), req.Module, runtime, req.Args, filter)
 	if err != nil {
 		writeDomainError(w, err)
 		return
@@ -142,8 +176,12 @@ func (s *Server) handleDownloadModule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid module name")
 		return
 	}
-	path := filepath.Join(s.moduleDir, name+".wasm")
-	f, err := os.Open(path)
+	filename, runtime, err := s.resolveModule(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("module %q not found", name))
+		return
+	}
+	f, err := os.Open(filepath.Join(s.moduleDir, filename))
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("module %q not found", name))
 		return
@@ -154,8 +192,13 @@ func (s *Server) handleDownloadModule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "cannot stat module")
 		return
 	}
-	w.Header().Set("Content-Type", "application/wasm")
-	http.ServeContent(w, r, name+".wasm", info.ModTime(), f)
+	if runtime == domain.RuntimeWASM {
+		w.Header().Set("Content-Type", "application/wasm")
+	} else {
+		w.Header().Set("Content-Type", "text/x-python")
+	}
+	w.Header().Set("X-Armada-Runtime", string(runtime))
+	http.ServeContent(w, r, filename, info.ModTime(), f)
 }
 
 func fileSHA256(path string) string {

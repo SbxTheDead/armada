@@ -2,6 +2,17 @@ package domain
 
 import "time"
 
+// Runtime identifies how a module is executed on the device.
+type Runtime string
+
+const (
+	// RuntimeWASM runs a WebAssembly module (compiled from C, Rust, …) in the
+	// agent's embedded, sandboxed wazero runtime.
+	RuntimeWASM Runtime = "wasm"
+	// RuntimePython runs a .py script via the device's Python interpreter.
+	RuntimePython Runtime = "python"
+)
+
 // A Job is an operator-issued request to run a module across a set of devices.
 // It fans out into one Task per matched system. The Job itself is a lightweight
 // grouping; live progress is derived from its Tasks.
@@ -9,6 +20,7 @@ type Job struct {
 	ID       string   `json:"id"`
 	TenantID string   `json:"tenant_id"`
 	Module   string   `json:"module"`         // module name to execute on each device
+	Runtime  Runtime  `json:"runtime"`        // how the module runs (wasm|python)
 	Args     []string `json:"args,omitempty"` // arguments passed to the module
 	Selector string   `json:"selector"`       // human description of the target filter
 	Total    int      `json:"total"`          // number of tasks fanned out
@@ -36,6 +48,7 @@ type Task struct {
 	TenantID string     `json:"tenant_id"`
 	SystemID string     `json:"system_id"`
 	Module   string     `json:"module"`
+	Runtime  Runtime    `json:"runtime"`
 	Args     []string   `json:"args,omitempty"`
 	Status   TaskStatus `json:"status"`
 	ExitCode int        `json:"exit_code"`
