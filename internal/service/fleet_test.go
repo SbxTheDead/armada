@@ -20,7 +20,7 @@ func newFleet(t *testing.T, clk *fixedClock) (*service.Fleet, *memory.DB) {
 	t.Helper()
 	db := memory.New()
 	seq := 0
-	f := service.NewFleet(db.Systems, db.JoinTokens, db.Identities, db.Telemetry, service.Options{
+	f := service.NewFleet(db.Systems, db.JoinTokens, db.Identities, db.Telemetry, db.Work, service.Options{
 		Now: clk.now,
 		IDGen: func() string {
 			seq++

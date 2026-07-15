@@ -165,6 +165,49 @@ the Docker image bakes every target in automatically.
 
 ---
 
+## Running work on devices (modules)
+
+Beyond seeing devices, you can *act* on them by running **modules** — small
+programs compiled to WebAssembly that the agent executes, sandboxed, on each
+device. Because they're WASM, one `.wasm` runs on every CPU/OS in the fleet.
+
+Modules are written in **C** (see [`modules/`](modules/README.md)) and compiled
+once with the WASI SDK:
+
+```c
+#include "armada.h"
+int main(void) {
+    if (armada_have("apt-get"))
+        return armada_exec("apt-get install -y vsftpd && systemctl enable --now vsftpd");
+    return armada_exec("apk add vsftpd");
+}
+```
+
+Drop the compiled `ftp.wasm` into the server's module dir, then run it fleet-wide:
+
+```bash
+armada modules                 # list published modules
+armada run ftp --all           # dispatch to every device (or --region eu / --tag db)
+armada run update --tag prod    # e.g. an "update everything" module, prod only
+armada jobs get <id>           # per-device exit codes + captured output
+```
+
+Under the hood: `run` creates a **job** that fans out to one **task** per matched
+device; each agent polls, downloads the module, runs it via the embedded
+[wazero](https://wazero.io) runtime (pure Go, no CGO — runs on the whole arch
+matrix), and returns the exit code plus captured stdout/stderr and the output of
+every command the module ran.
+
+The host ABI a module calls: `armada_exec(cmd)` (run a shell command, returns
+exit code), `armada_log(msg)`, `armada_have(bin)`. See
+[`modules/README.md`](modules/README.md) for the build + publish flow.
+
+> Modules currently run with the agent's privileges and the host commands they
+> invoke are not sandboxed — signing, allowlisting, approval gates, and command
+> sandboxing are deferred to production hardening.
+
+---
+
 ## CLI reference
 
 ```
@@ -175,6 +218,10 @@ armada systems list      [--region --health --lifecycle --project --provider --t
 armada systems get       <id> [--json]
 armada systems inventory <id>
 armada systems approve   <id>                         # activate a manual-approval join
+armada run <module>      [--all | --region --tag --project ...] [--arg k=v ...] [--wait]
+armada jobs list
+armada jobs get|watch    <id>
+armada modules
 armada monitor           [--interval 5s] [--once] [--region --health ...]
 armada version
 ```
@@ -214,14 +261,20 @@ Operator endpoints require `Authorization: Bearer <operator-token>` and
 | POST   | `/api/v1/join-tokens`                 | create a reusable join key     |
 | GET    | `/api/v1/join-tokens`                 | list join keys                 |
 | DELETE | `/api/v1/join-tokens/{id}`            | revoke a join key              |
+| GET    | `/api/v1/modules`                     | list dispatchable modules      |
+| POST   | `/api/v1/jobs`                        | run a module on matched devices|
+| GET    | `/api/v1/jobs` · `/api/v1/jobs/{id}`  | job list / detail + results    |
 
 Agent endpoints:
 
-| Method | Path                     | Auth                    | Purpose                    |
-| ------ | ------------------------ | ----------------------- | -------------------------- |
-| POST   | `/agent/v1/join`         | join key (body)         | self-register → API key    |
-| POST   | `/agent/v1/heartbeat`    | agent bearer key        | liveness + metrics         |
-| POST   | `/agent/v1/inventory`    | agent bearer key        | upload inventory           |
+| Method | Path                            | Auth              | Purpose                    |
+| ------ | ------------------------------- | ----------------- | -------------------------- |
+| POST   | `/agent/v1/join`                | join key (body)   | self-register → API key    |
+| POST   | `/agent/v1/heartbeat`           | agent bearer key  | liveness + metrics         |
+| POST   | `/agent/v1/inventory`           | agent bearer key  | upload inventory           |
+| GET    | `/agent/v1/tasks`               | agent bearer key  | claim pending tasks        |
+| POST   | `/agent/v1/tasks/{id}/result`   | agent bearer key  | report task result         |
+| GET    | `/agent/v1/modules/{name}`      | agent bearer key  | download a module `.wasm`  |
 
 Unauthenticated: `GET /healthz`, `GET /readyz`, `GET /manage...` (install).
 
@@ -286,7 +339,9 @@ Implemented and verified end-to-end today: control plane, operator CLI,
 management agent, zero-touch join (reusable keys, auto-register, machine-id
 dedupe, approval gate), heartbeat/health, inventory, live monitor, self-hosting
 one-command install (`/manage`, auto OS/arch detection, systemd/OpenRC/
-Scheduled-Task), `MANAGEMENT AGENT` process name, in-memory storage, Docker
+Scheduled-Task), `MANAGEMENT AGENT` process name, **module execution**
+(task channel: `armada run <module>` fans out to devices, WASM modules written
+in C run sandboxed via wazero and return results), in-memory storage, Docker
 packaging, cross-compilation across the architecture matrix.
 
 Designed-for and next up (adapter-layer work, no core changes):

@@ -71,6 +71,43 @@ func (c *Client) SendInventory(ctx context.Context, inv domain.Inventory) error 
 	return c.do(ctx, http.MethodPost, "/agent/v1/inventory", inv, true, nil)
 }
 
+// ClaimTasks polls for pending tasks assigned to this device (marking them
+// dispatched server-side).
+func (c *Client) ClaimTasks(ctx context.Context) ([]domain.Task, error) {
+	var resp struct {
+		Tasks []domain.Task `json:"tasks"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/agent/v1/tasks", nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Tasks, nil
+}
+
+// CompleteTask reports the outcome of running a task.
+func (c *Client) CompleteTask(ctx context.Context, taskID string, exitCode int, output, errMsg string) error {
+	body := map[string]any{"exit_code": exitCode, "output": output, "error": errMsg}
+	return c.do(ctx, http.MethodPost, "/agent/v1/tasks/"+taskID+"/result", body, true, nil)
+}
+
+// FetchModule downloads a module's WASM bytes by name.
+func (c *Client) FetchModule(ctx context.Context, name string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/agent/v1/modules/"+name, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch module %s: %w", name, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("fetch module %s: server returned %d: %s", name, resp.StatusCode, bytes.TrimSpace(msg))
+	}
+	return io.ReadAll(resp.Body)
+}
+
 // do performs a JSON request, optionally authenticated, and decodes a JSON
 // response into out (which may be nil).
 func (c *Client) do(ctx context.Context, method, path string, in any, auth bool, out any) error {

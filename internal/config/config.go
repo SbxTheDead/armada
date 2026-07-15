@@ -22,6 +22,10 @@ type Server struct {
 	// AgentDistDir is the directory of cross-compiled agent binaries the
 	// control plane serves from /manage/bin/... . Populate it with `make agents`.
 	AgentDistDir string
+
+	// ModuleDir is the directory of compiled WASM modules the control plane
+	// serves to agents for task execution.
+	ModuleDir string
 }
 
 // LoadServer reads server config from the environment.
@@ -33,6 +37,7 @@ func LoadServer() Server {
 		WriteTimeout:      envDuration("ARMADA_WRITE_TIMEOUT", 15*time.Second),
 		DatabaseURL:       os.Getenv("ARMADA_DATABASE_URL"),
 		AgentDistDir:      env("ARMADA_AGENT_DIST_DIR", "bin/agents"),
+		ModuleDir:         env("ARMADA_MODULE_DIR", "modules/dist"),
 	}
 }
 
@@ -44,8 +49,10 @@ type Agent struct {
 	FQDN              string
 	APIKey            string // populated after enrollment
 	StatePath         string // where the agent persists its identity
+	ModuleCacheDir    string // where the agent caches downloaded WASM modules
 	HeartbeatInterval time.Duration
 	InventoryInterval time.Duration
+	TaskPollInterval  time.Duration
 }
 
 // LoadAgent reads agent config from the environment.
@@ -57,8 +64,10 @@ func LoadAgent() Agent {
 		FQDN:              os.Getenv("ARMADA_FQDN"),
 		APIKey:            os.Getenv("ARMADA_API_KEY"),
 		StatePath:         env("ARMADA_AGENT_STATE", "armada-agent.json"),
+		ModuleCacheDir:    env("ARMADA_MODULE_CACHE", "armada-modules"),
 		HeartbeatInterval: envDuration("ARMADA_HEARTBEAT_INTERVAL", 60*time.Second),
 		InventoryInterval: envDuration("ARMADA_INVENTORY_INTERVAL", 30*time.Minute),
+		TaskPollInterval:  envDuration("ARMADA_TASK_POLL_INTERVAL", 10*time.Second),
 	}
 }
 

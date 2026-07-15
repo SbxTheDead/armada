@@ -20,6 +20,7 @@ type Server struct {
 	log           *slog.Logger
 	operatorToken string // optional static operator bearer (scaffold auth)
 	distDir       string // directory of cross-compiled agent binaries to serve
+	moduleDir     string // directory of compiled WASM modules to serve
 }
 
 // Config configures the HTTP server.
@@ -28,6 +29,7 @@ type Config struct {
 	Logger        *slog.Logger
 	OperatorToken string
 	AgentDistDir  string
+	ModuleDir     string
 }
 
 // New builds a Server.
@@ -40,11 +42,16 @@ func New(cfg Config) *Server {
 	if distDir == "" {
 		distDir = "bin/agents"
 	}
+	moduleDir := cfg.ModuleDir
+	if moduleDir == "" {
+		moduleDir = "modules/dist"
+	}
 	return &Server{
 		fleet:         cfg.Fleet,
 		log:           log,
 		operatorToken: cfg.OperatorToken,
 		distDir:       distDir,
+		moduleDir:     moduleDir,
 	}
 }
 
@@ -75,6 +82,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/join-tokens", op(http.HandlerFunc(s.handleListJoinTokens)))
 	mux.Handle("DELETE /api/v1/join-tokens/{id}", op(http.HandlerFunc(s.handleRevokeJoinToken)))
 
+	// Operator: module execution (jobs) + module catalog.
+	mux.Handle("GET /api/v1/modules", op(http.HandlerFunc(s.handleListModules)))
+	mux.Handle("POST /api/v1/jobs", op(http.HandlerFunc(s.handleCreateJob)))
+	mux.Handle("GET /api/v1/jobs", op(http.HandlerFunc(s.handleListJobs)))
+	mux.Handle("GET /api/v1/jobs/{id}", op(http.HandlerFunc(s.handleGetJob)))
+
 	// Self-hosting agent distribution: /manage installer + binary downloads.
 	s.registerManageRoutes(mux)
 
@@ -85,6 +98,9 @@ func (s *Server) Handler() http.Handler {
 	ag := s.requireAgent
 	mux.Handle("POST /agent/v1/heartbeat", ag(http.HandlerFunc(s.handleHeartbeat)))
 	mux.Handle("POST /agent/v1/inventory", ag(http.HandlerFunc(s.handleInventory)))
+	mux.Handle("GET /agent/v1/tasks", ag(http.HandlerFunc(s.handleClaimTasks)))
+	mux.Handle("POST /agent/v1/tasks/{id}/result", ag(http.HandlerFunc(s.handleTaskResult)))
+	mux.Handle("GET /agent/v1/modules/{name}", ag(http.HandlerFunc(s.handleDownloadModule)))
 
 	// Middleware chain (outermost first): recover -> log -> routes.
 	return s.recoverer(s.logRequests(mux))

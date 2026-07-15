@@ -44,6 +44,12 @@ func main() {
 		err = runSystems(ctx, os.Args[2:])
 	case "join-token":
 		err = runJoinToken(ctx, os.Args[2:])
+	case "run":
+		err = runRun(ctx, os.Args[2:])
+	case "jobs":
+		err = runJobs(ctx, os.Args[2:])
+	case "modules":
+		err = runModules(ctx, os.Args[2:])
 	case "monitor":
 		err = runMonitor(ctx, os.Args[2:])
 	case "version", "--version", "-v":
@@ -73,6 +79,9 @@ Commands:
   systems get        Show one device in detail
   systems inventory  Show a device's latest hardware/OS inventory
   systems approve    Activate a device that joined under a manual-approval key
+  run                Run a module on matching devices (e.g. armada run ftp --all)
+  jobs list|get|watch  Inspect module-run jobs and their per-device results
+  modules            List modules the control plane can dispatch
   monitor            Live health + metrics view of the fleet
   version            Print the CLI version
 

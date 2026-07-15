@@ -2,6 +2,11 @@
 /bin/
 coverage.out
 
+# Compiled module artifacts (build from modules/src into modules/dist)
+/modules/dist/*.wasm
+# Agent module cache
+/armada-modules/
+
 # Agent local state (contains the device API key)
 armada-agent.json
 *-state.json

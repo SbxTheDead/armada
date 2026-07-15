@@ -30,6 +30,7 @@ type Fleet struct {
 	joinTokens store.JoinTokenStore
 	identities store.IdentityStore
 	telemetry  store.TelemetryStore
+	work       store.WorkStore
 
 	now Clock
 	id  IDGen
@@ -47,12 +48,13 @@ type Options struct {
 }
 
 // NewFleet wires the service to its persistence ports.
-func NewFleet(systems store.SystemStore, joinTokens store.JoinTokenStore, identities store.IdentityStore, telemetry store.TelemetryStore, opts Options) *Fleet {
+func NewFleet(systems store.SystemStore, joinTokens store.JoinTokenStore, identities store.IdentityStore, telemetry store.TelemetryStore, work store.WorkStore, opts Options) *Fleet {
 	f := &Fleet{
 		systems:           systems,
 		joinTokens:        joinTokens,
 		identities:        identities,
 		telemetry:         telemetry,
+		work:              work,
 		now:               opts.Now,
 		id:                opts.IDGen,
 		heartbeatInterval: opts.HeartbeatInterval,

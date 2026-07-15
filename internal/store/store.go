@@ -53,6 +53,21 @@ type IdentityStore interface {
 	GetByAPIKeyHash(ctx context.Context, hash string) (*domain.AgentIdentity, error)
 }
 
+// WorkStore persists jobs and their fanned-out tasks. ClaimPendingForSystem is
+// the agent's poll: it atomically flips a system's pending tasks to dispatched
+// and returns them, so a task is handed out exactly once.
+type WorkStore interface {
+	CreateJob(ctx context.Context, j *domain.Job) error
+	GetJob(ctx context.Context, tenantID, id string) (*domain.Job, error)
+	ListJobs(ctx context.Context, tenantID string) ([]*domain.Job, error)
+
+	CreateTask(ctx context.Context, t *domain.Task) error
+	GetTask(ctx context.Context, tenantID, id string) (*domain.Task, error)
+	ListTasksByJob(ctx context.Context, tenantID, jobID string) ([]*domain.Task, error)
+	ClaimPendingForSystem(ctx context.Context, tenantID, systemID string) ([]*domain.Task, error)
+	UpdateTask(ctx context.Context, t *domain.Task) error
+}
+
 // TelemetryStore persists the append-only heartbeat and inventory streams.
 // Implementations may down-sample or retain a rolling window.
 type TelemetryStore interface {

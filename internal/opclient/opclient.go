@@ -175,6 +175,70 @@ func (c *Client) ApproveSystem(ctx context.Context, id string) (*domain.System, 
 	return &sys, nil
 }
 
+// --- Modules & jobs ---
+
+// ModuleInfo describes a published module.
+type ModuleInfo struct {
+	Name   string `json:"name"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
+}
+
+// ListModules returns the modules the control plane can dispatch.
+func (c *Client) ListModules(ctx context.Context) ([]ModuleInfo, error) {
+	var resp struct {
+		Modules []ModuleInfo `json:"modules"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/modules", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Modules, nil
+}
+
+// RunModule dispatches a module to every device matching the filter.
+func (c *Client) RunModule(ctx context.Context, module string, args []string, f ListFilter) (*domain.Job, error) {
+	body := map[string]any{
+		"module":      module,
+		"args":        args,
+		"project":     f.Project,
+		"region":      f.Region,
+		"environment": f.Environment,
+		"provider":    f.Provider,
+		"tag":         f.Tag,
+	}
+	var job domain.Job
+	if err := c.do(ctx, http.MethodPost, "/api/v1/jobs", body, &job); err != nil {
+		return nil, err
+	}
+	return &job, nil
+}
+
+// ListJobs returns the tenant's jobs, newest first.
+func (c *Client) ListJobs(ctx context.Context) ([]domain.Job, error) {
+	var resp struct {
+		Jobs []domain.Job `json:"jobs"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/jobs", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Jobs, nil
+}
+
+// JobDetail is a job with its per-device tasks.
+type JobDetail struct {
+	Job   domain.Job    `json:"job"`
+	Tasks []domain.Task `json:"tasks"`
+}
+
+// GetJob returns a job and its tasks.
+func (c *Client) GetJob(ctx context.Context, id string) (*JobDetail, error) {
+	var d JobDetail
+	if err := c.do(ctx, http.MethodGet, "/api/v1/jobs/"+url.PathEscape(id), nil, &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
 // do performs a JSON request with operator auth and decodes the response.
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
 	var reader io.Reader

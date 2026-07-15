@@ -17,7 +17,7 @@ import (
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	db := memory.New()
-	fleet := service.NewFleet(db.Systems, db.JoinTokens, db.Identities, db.Telemetry, service.Options{
+	fleet := service.NewFleet(db.Systems, db.JoinTokens, db.Identities, db.Telemetry, db.Work, service.Options{
 		HeartbeatInterval: time.Minute,
 	})
 	srv := httpapi.New(httpapi.Config{Fleet: fleet})

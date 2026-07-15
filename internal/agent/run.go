@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/SbxTheDead/armada/internal/agent/inventory"
+	"github.com/SbxTheDead/armada/internal/agent/wasmrun"
 	"github.com/SbxTheDead/armada/internal/config"
 	"github.com/SbxTheDead/armada/internal/domain"
 )
@@ -45,14 +46,19 @@ func Run(ctx context.Context, cfg config.Agent, log *slog.Logger, version string
 	// Send an inventory snapshot immediately, then on its own slower cadence.
 	sendInventory(ctx, client, st.SystemID, log)
 
+	runner := wasmrun.New()
+
 	hbTicker := time.NewTicker(cfg.HeartbeatInterval)
 	defer hbTicker.Stop()
 	invTicker := time.NewTicker(cfg.InventoryInterval)
 	defer invTicker.Stop()
+	taskTicker := time.NewTicker(cfg.TaskPollInterval)
+	defer taskTicker.Stop()
 
 	// Fire one heartbeat right away so the system flips healthy without waiting
-	// a full interval.
+	// a full interval, and check for any queued tasks immediately.
 	sendHeartbeat(ctx, client, st.SystemID, log)
+	pollAndRunTasks(ctx, client, runner, log)
 
 	for {
 		select {
@@ -63,6 +69,8 @@ func Run(ctx context.Context, cfg config.Agent, log *slog.Logger, version string
 			sendHeartbeat(ctx, client, st.SystemID, log)
 		case <-invTicker.C:
 			sendInventory(ctx, client, st.SystemID, log)
+		case <-taskTicker.C:
+			pollAndRunTasks(ctx, client, runner, log)
 		}
 	}
 }

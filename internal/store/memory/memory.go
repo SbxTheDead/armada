@@ -28,6 +28,8 @@ type core struct {
 	byAPIKey   map[string]string                // apiKeyHash -> tenantID/systemID
 	heartbeats map[string]*domain.Heartbeat     // key: systemID (latest only)
 	inventory  map[string]*domain.Inventory     // key: systemID
+	jobs       map[string]*domain.Job           // key: tenantID/id
+	tasks      map[string]*domain.Task          // key: id
 }
 
 // DB is the set of port adapters returned by New. Wire each field into the
@@ -37,6 +39,7 @@ type DB struct {
 	JoinTokens *JoinTokenStore
 	Identities *IdentityStore
 	Telemetry  *TelemetryStore
+	Work       *WorkStore
 }
 
 // New constructs an initialised in-memory DB.
@@ -48,12 +51,15 @@ func New() *DB {
 		byAPIKey:   make(map[string]string),
 		heartbeats: make(map[string]*domain.Heartbeat),
 		inventory:  make(map[string]*domain.Inventory),
+		jobs:       make(map[string]*domain.Job),
+		tasks:      make(map[string]*domain.Task),
 	}
 	return &DB{
 		Systems:    &SystemStore{c},
 		JoinTokens: &JoinTokenStore{c},
 		Identities: &IdentityStore{c},
 		Telemetry:  &TelemetryStore{c},
+		Work:       &WorkStore{c},
 	}
 }
 
@@ -298,6 +304,106 @@ func (s *IdentityStore) GetByAPIKeyHash(ctx context.Context, hash string) (*doma
 	}
 	cp := *id
 	return &cp, nil
+}
+
+// --- WorkStore ---
+
+type WorkStore struct{ c *core }
+
+var _ store.WorkStore = (*WorkStore)(nil)
+
+func (s *WorkStore) CreateJob(ctx context.Context, j *domain.Job) error {
+	s.c.mu.Lock()
+	defer s.c.mu.Unlock()
+	cp := *j
+	s.c.jobs[sysKey(j.TenantID, j.ID)] = &cp
+	return nil
+}
+
+func (s *WorkStore) GetJob(ctx context.Context, tenantID, id string) (*domain.Job, error) {
+	s.c.mu.RLock()
+	defer s.c.mu.RUnlock()
+	j, ok := s.c.jobs[sysKey(tenantID, id)]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	cp := *j
+	return &cp, nil
+}
+
+func (s *WorkStore) ListJobs(ctx context.Context, tenantID string) ([]*domain.Job, error) {
+	s.c.mu.RLock()
+	defer s.c.mu.RUnlock()
+	var out []*domain.Job
+	for _, j := range s.c.jobs {
+		if j.TenantID == tenantID {
+			cp := *j
+			out = append(out, &cp)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (s *WorkStore) CreateTask(ctx context.Context, t *domain.Task) error {
+	s.c.mu.Lock()
+	defer s.c.mu.Unlock()
+	cp := *t
+	s.c.tasks[t.ID] = &cp
+	return nil
+}
+
+func (s *WorkStore) GetTask(ctx context.Context, tenantID, id string) (*domain.Task, error) {
+	s.c.mu.RLock()
+	defer s.c.mu.RUnlock()
+	t, ok := s.c.tasks[id]
+	if !ok || t.TenantID != tenantID {
+		return nil, domain.ErrNotFound
+	}
+	cp := *t
+	return &cp, nil
+}
+
+func (s *WorkStore) ListTasksByJob(ctx context.Context, tenantID, jobID string) ([]*domain.Task, error) {
+	s.c.mu.RLock()
+	defer s.c.mu.RUnlock()
+	var out []*domain.Task
+	for _, t := range s.c.tasks {
+		if t.TenantID == tenantID && t.JobID == jobID {
+			cp := *t
+			out = append(out, &cp)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// ClaimPendingForSystem flips a system's pending tasks to dispatched and returns
+// them, so the agent runs each task exactly once per poll.
+func (s *WorkStore) ClaimPendingForSystem(ctx context.Context, tenantID, systemID string) ([]*domain.Task, error) {
+	s.c.mu.Lock()
+	defer s.c.mu.Unlock()
+	var out []*domain.Task
+	for _, t := range s.c.tasks {
+		if t.TenantID == tenantID && t.SystemID == systemID && t.Status == domain.TaskPending {
+			t.Status = domain.TaskDispatched
+			cp := *t
+			out = append(out, &cp)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func (s *WorkStore) UpdateTask(ctx context.Context, t *domain.Task) error {
+	s.c.mu.Lock()
+	defer s.c.mu.Unlock()
+	if _, ok := s.c.tasks[t.ID]; !ok {
+		return domain.ErrNotFound
+	}
+	cp := *t
+	s.c.tasks[t.ID] = &cp
+	return nil
 }
 
 // --- TelemetryStore ---
